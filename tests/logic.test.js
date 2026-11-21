@@ -99,3 +99,28 @@ test('crypto roundtrip and wrong password', async () => {
   assert.deepEqual(await C.decryptBackup(b, 'password1'), { x: 5 });
   await assert.rejects(C.decryptBackup(b, 'nope'), /Неверный пароль/);
 });
+
+import { money, isCrypto, registerCryptos, roundAmt } from '../js/util.js';
+
+test('crypto formatting and precision', () => {
+  assert.ok(isCrypto('BTC'));
+  assert.ok(!isCrypto('USD'));
+  assert.equal(money(0.01234567, 'BTC').replace(/\s/g, ' '), '0,01234567 BTC');
+  assert.equal(roundAmt(0.123456789, 'ETH'), 0.12345679);
+  assert.equal(roundAmt(1.005, 'RUB'), 1.01);
+  registerCryptos([{ s: 'PEPE', n: 'Pepe', id: 'pepe' }]);
+  assert.ok(isCrypto('PEPE'));
+});
+
+test('exchanges and adjustments are not income/expense', () => {
+  const st = {
+    settings: { base: 'RUB' }, categories: [], dismissed: [],
+    txns: [
+      { id: 'a', type: 'expense', amount: 100, currency: 'RUB', rate: 1, date: '2026-11-10', categoryId: 'x', createdAt: 1 },
+      { id: 'b', type: 'exchange', amount: 65000, currency: 'RUB', rate: 1, toAmount: 0.01, toCurrency: 'BTC', toRate: 6500000, date: '2026-11-10', categoryId: 'c', createdAt: 2 },
+      { id: 'c', type: 'adjust', amount: 500, currency: 'USD', rate: 90, date: '2026-11-10', categoryId: '', createdAt: 3 },
+    ],
+  };
+  const t = A.totals(A.enrich(st), '2026-11-01', '2026-12-01');
+  assert.deepEqual([t.inc, t.exp, t.count], [0, 100, 1]);
+});

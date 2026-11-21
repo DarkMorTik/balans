@@ -7,6 +7,7 @@ import { renderLock, renderOnboarding } from './views/lock.js';
 import { renderHome } from './views/home.js';
 import { renderStats } from './views/stats.js';
 import { renderSettings } from './views/settings.js';
+import { renderPortfolio } from './views/portfolio.js';
 
 const app = document.getElementById('app');
 const shield = document.getElementById('shield');
@@ -14,6 +15,7 @@ const shield = document.getElementById('shield');
 const TABS = [
   { id: 'home', label: 'Главная', icon: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z', render: renderHome },
   { id: 'stats', label: 'Аналитика', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2', render: renderStats },
+  { id: 'portfolio', label: 'Портфель', icon: 'M3 7h18v13H3zM3 7l2-3h14l2 3M8 12h8M8 16h5', render: renderPortfolio },
   { id: 'settings', label: 'Настройки', icon: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.8 1.7 1l.4 2.5h4l.4-2.5c.6-.2 1.2-.6 1.7-1l2.4 1 2-3.4z', render: (root) => renderSettings(root, { lockNow }) },
 ];
 
@@ -58,7 +60,9 @@ function renderShell() {
 }
 
 function onUnlocked() {
+  store.onUnlock();
   renderShell();
+  store.refreshMarket().catch(() => {});
 }
 
 function lockNow() {

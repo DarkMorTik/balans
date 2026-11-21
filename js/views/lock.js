@@ -1,5 +1,6 @@
 // Экран блокировки и первый запуск (создание PIN, выбор валюты, Face ID).
-import { h, clear, haptic } from '../util.js';
+import { h, clear, haptic, dayKey } from '../util.js';
+import { guilloche } from '../guilloche.js';
 import * as vault from '../vault.js';
 import { initialState, CURRENCIES } from '../store.js';
 
@@ -71,19 +72,34 @@ export async function renderLock(root, onUnlocked) {
   const meta = await vault.getMeta();
   let pad;
 
-  const tryBio = async () => {
+  let bioBusy = false;
+  let done = false;
+  const tryBio = async (auto = false) => {
+    if (bioBusy || done) return;
+    bioBusy = true;
     try {
-      pad.setSub('');
       await vault.unlockWithBiometrics();
+      done = true;
       pad.destroy();
       onUnlocked();
     } catch (e) {
-      if (e?.name !== 'NotAllowedError') pad.setSub('Face ID недоступен — введите PIN');
+      // авто-запуск без касания iOS может отклонить — тогда ждём нажатия на кнопку
+      if (!auto && e?.name !== 'NotAllowedError' && e?.name !== 'AbortError') pad.setSub('Face ID недоступен — введите PIN');
+    } finally {
+      bioBusy = false;
     }
   };
+  // Face ID запускается сам, как только приложение на экране
+  if (meta?.bio) {
+    const auto = () => setTimeout(() => tryBio(true), 250);
+    if (document.visibilityState === 'visible') auto();
+    else document.addEventListener('visibilitychange', function once() {
+      if (document.visibilityState === 'visible') { document.removeEventListener('visibilitychange', once); auto(); }
+    });
+  }
 
   const bio = meta?.bio
-    ? h('button', { class: 'pin-key pin-fn bio', type: 'button', onclick: tryBio, 'aria-label': 'Войти по Face ID' }, faceIdIcon())
+    ? h('button', { class: 'pin-key pin-fn bio', type: 'button', onclick: () => tryBio(false), 'aria-label': 'Войти по Face ID' }, faceIdIcon())
     : null;
 
   pad = pinPad({
@@ -109,7 +125,10 @@ export async function renderLock(root, onUnlocked) {
     },
   });
 
-  root.append(h('div', { class: 'lock-screen' }, h('div', { class: 'lock-logo' }, logo()), pad.el));
+  root.append(h('div', { class: 'lock-screen' },
+    h('div', { class: 'lock-seal' }, guilloche({ w: 300, h: 300, seed: dayKey().slice(0, 7), rosette: 'center', waves: false, density: 0.8 })),
+    pad.el,
+    meta?.bio && h('button', { class: 'btn btn-plain bio-link', onclick: () => tryBio(false) }, 'Войти с Face ID')));
 }
 
 // ---------- Первый запуск ----------
@@ -119,7 +138,7 @@ export function renderOnboarding(root, onDone) {
   const step1 = () => {
     clear(root);
     root.append(h('div', { class: 'onb' },
-      h('div', { class: 'lock-logo big' }, logo()),
+      h('div', { class: 'lock-seal onb-seal' }, guilloche({ w: 300, h: 300, seed: 'balans', rosette: 'center', waves: false, density: 0.8 })),
       h('h1', {}, 'Баланс'),
       h('p', { class: 'muted' }, 'Простой учёт доходов и расходов'),
       h('ul', { class: 'onb-list' },

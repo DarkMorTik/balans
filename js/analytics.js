@@ -15,7 +15,7 @@ const inRange = (t, start, end) => t.date >= start && t.date < end;
 export function totals(txns, start, end) {
   let inc = 0, exp = 0, count = 0;
   for (const t of txns) {
-    if (!inRange(t, start, end)) continue;
+    if (!inRange(t, start, end) || (t.type !== 'income' && t.type !== 'expense')) continue;
     count++;
     if (t.type === 'income') inc += t.v; else exp += t.v;
   }
@@ -263,7 +263,7 @@ export function insights(state, catOf, today = dayKey()) {
 
   // 5. Возможные дубли
   const seen = new Map();
-  txns.filter((t) => t.date > addDays(today, -60)).forEach((t) => {
+  txns.filter((t) => t.date > addDays(today, -60) && t.type !== 'adjust').forEach((t) => {
     const k = [t.type, t.amount, t.currency, t.categoryId, t.date].join('|');
     if (!seen.has(k)) seen.set(k, []);
     seen.get(k).push(t);

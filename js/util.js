@@ -50,9 +50,42 @@ export function uid() {
 }
 
 export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+export const round8 = (n) => Math.round(n * 1e8) / 1e8;
+
+// ---------- Криптовалюты ----------
+export const CRYPTO = {
+  BTC: { name: 'Bitcoin', sym: '₿', cg: 'bitcoin' },
+  ETH: { name: 'Ethereum', sym: 'Ξ', cg: 'ethereum' },
+  USDT: { name: 'Tether', sym: '₮', cg: 'tether' },
+  USDC: { name: 'USD Coin', sym: '$', cg: 'usd-coin' },
+  TON: { name: 'Toncoin', sym: '◆', cg: 'the-open-network' },
+  SOL: { name: 'Solana', sym: '◎', cg: 'solana' },
+  BNB: { name: 'BNB', sym: 'B', cg: 'binancecoin' },
+  XRP: { name: 'XRP', sym: '✕', cg: 'ripple' },
+  TRX: { name: 'TRON', sym: 'T', cg: 'tron' },
+  DOGE: { name: 'Dogecoin', sym: 'Ð', cg: 'dogecoin' },
+  LTC: { name: 'Litecoin', sym: 'Ł', cg: 'litecoin' },
+  ADA: { name: 'Cardano', sym: '₳', cg: 'cardano' },
+};
+export const isCrypto = (cur) => Object.prototype.hasOwnProperty.call(CRYPTO, cur);
+
+/** Добавить монеты из рыночного списка (топ-100). coins: [{s, n, id}] */
+export function registerCryptos(coins = []) {
+  for (const c of coins) {
+    if (!c?.s || CRYPTO[c.s]) continue;
+    CRYPTO[c.s] = { name: c.n || c.s, sym: c.s.slice(0, 1), cg: c.id };
+  }
+}
+export const roundAmt = (n, cur) => (isCrypto(cur) ? round8(n) : round2(n));
 
 // ---------- Деньги ----------
 const nfCache = new Map();
+const plainNf = new Map();
+function cryptoFormat(abs, cur) {
+  const frac = abs >= 1000 ? 2 : abs >= 1 ? 4 : 8;
+  if (!plainNf.has(frac)) plainNf.set(frac, new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: frac }));
+  return `${plainNf.get(frac).format(abs)} ${cur}`;
+}
 function nf(cur, maxFrac) {
   const key = cur + maxFrac;
   if (!nfCache.has(key)) {
@@ -71,7 +104,7 @@ function nf(cur, maxFrac) {
 export function money(v, cur, { sign = false, frac } = {}) {
   const abs = Math.abs(v);
   const maxFrac = frac ?? (abs >= 10000 ? 0 : 2);
-  const str = nf(cur, maxFrac).format(abs);
+  const str = isCrypto(cur) ? cryptoFormat(abs, cur) : nf(cur, maxFrac).format(abs);
   if (sign) return (v < 0 ? '−' : v > 0 ? '+' : '') + str;
   return (v < 0 ? '−' : '') + str;
 }
@@ -80,6 +113,7 @@ const compactNf = new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumF
 export const compact = (v) => compactNf.format(v);
 
 export function currencySymbol(cur) {
+  if (isCrypto(cur)) return CRYPTO[cur].sym;
   try {
     const parts = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: cur }).formatToParts(0);
     return parts.find((p) => p.type === 'currency')?.value || cur;
