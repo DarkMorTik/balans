@@ -178,7 +178,7 @@ h1, h2, h3, p { margin: 0; }
 @media (prefers-color-scheme: light) { .gq-line { opacity: 0.45; stroke-width: 0.5; } }
 
 /* ── действия ── */
-.dock-actions { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; margin-bottom: 26px; }
+.dock-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 26px; }
 .dock-actions.two { grid-template-columns: 1.4fr 1fr; margin-top: 4px; }
 .act {
   height: 56px; border-radius: 17px;
@@ -189,7 +189,7 @@ h1, h2, h3, p { margin: 0; }
 }
 .act:active { transform: scale(0.96); }
 .act-sign { font-family: var(--mono); font-size: 19px; font-weight: 500; line-height: 1; }
-.act-exp { background: var(--text); color: var(--bg); border-color: transparent; }
+.act-exp .act-sign { color: var(--coral); }
 .act-inc .act-sign { color: var(--mint); }
 .act-swap .act-sign { color: var(--brass); }
 
