@@ -119,6 +119,7 @@ export async function enableBiometrics() {
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
       authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required' },
       extensions: { prf: { eval: { first: prfSalt } } },
+      hints: ['client-device'], // просим хранить ключ на этом устройстве (iCloud Keychain), а не во внешнем менеджере
       timeout: 60000,
     },
   });
@@ -141,6 +142,7 @@ async function prfAssert(credId, prfSalt) {
       allowCredentials: [{ type: 'public-key', id: credId }],
       userVerification: 'required',
       extensions: { prf: { eval: { first: prfSalt } } },
+      hints: ['client-device'],
       timeout: 60000,
     },
   });
