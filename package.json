@@ -1,0 +1,10 @@
+{
+  "name": "balans",
+  "private": true,
+  "type": "module",
+  "description": "Баланс — приватный учёт финансов (PWA). Без зависимостей.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "serve": "python -m http.server 8080"
+  }
+}
