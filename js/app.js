@@ -73,6 +73,16 @@ function onUnlocked() {
   store.refreshMarket().catch(() => {});
 }
 
+// автообновление курсов, пока открыт портфель: крипта (BTC и т.п.) без фиксированного курса
+const LIVE_MS = 60 * 1000;
+setInterval(() => {
+  if (!vault.isUnlocked() || document.hidden || current !== 'portfolio') return;
+  if (!store.settings()?.livePrices) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return; // не сбивать ввод перерисовкой
+  store.refreshMarket(false, LIVE_MS - 5000).catch(() => {});
+}, LIVE_MS);
+
 function lockNow() {
   closeAllSheets();
   unsub?.();

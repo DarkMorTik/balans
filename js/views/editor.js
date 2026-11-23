@@ -326,7 +326,7 @@ export function openExchangeEditor({ txn = null } = {}) {
   function updateInfo() {
     clear(info);
     const a = parseAmount(d.fromStr), b = parseAmount(d.toStr);
-    const own = store.holdings();
+    const own = store.portfolioHoldings();
     fromHint.textContent = `доступно ${money(own[d.from]?.qty || 0, d.from)}`;
     toHint.textContent = `есть ${money(own[d.to]?.qty || 0, d.to)}`;
     const market = store.pairRate(d.to, d.from);

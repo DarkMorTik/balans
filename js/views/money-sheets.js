@@ -47,9 +47,9 @@ export function openAccountEditor({ item = null } = {}) {
         h('input', { type: 'checkbox', class: 'switch', checked: d.archived, onchange: (e) => { d.archived = e.target.checked; } })),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить счёт'),
       item && h('button', { class: 'btn btn-plain danger', onclick: async () => {
-        if (!(await confirmSheet(`Удалить счёт «${item.name}»?`, { detail: 'Операции останутся, но будут без счёта. Чтобы просто скрыть счёт, отправьте его в архив.' }))) return;
+        if (!(await confirmSheet(`Удалить счёт «${item.name}»?`, { detail: 'Счёт и его остаток пропадут из портфеля. Траты и доходы останутся на главной, без счёта. Вложения, оплаченные с этого счёта, останутся в портфеле. Чтобы просто скрыть счёт, отправьте его в архив.' }))) return;
         store.state().txns.forEach((t) => { if (t.accountId === item.id) delete t.accountId; if (t.toAccountId === item.id) delete t.toAccountId; });
-        await store.removeItem('accounts', item.id);
+        await store.deleteAccount(item.id);
         sh.close();
       } }, 'Удалить счёт')),
   });

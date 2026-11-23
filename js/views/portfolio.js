@@ -41,7 +41,7 @@ export function openAdjustSheet(cur) {
   const now = h('div', { class: 'muted small mono' });
   const render = () => {
     curBtn.textContent = code;
-    now.textContent = `Сейчас по операциям: ${money(store.holdings()[code]?.qty || 0, code)}`;
+    now.textContent = `Сейчас в портфеле: ${money(store.portfolioHoldings()[code]?.qty || 0, code)}`;
   };
   const sh = openSheet({
     title: 'Фактический остаток', className: 'sheet-compact',
@@ -66,7 +66,7 @@ function assetSheet(code) {
   const body = h('div', { class: 'editor' });
   const render = () => {
     clear(body);
-    const e = store.holdings()[code] || { qty: 0, cost: 0, value: 0, pnl: 0 };
+    const e = store.portfolioHoldings()[code] || { qty: 0, cost: 0, value: 0, pnl: 0 };
     const market = store.marketRate(code);
     const manual = s.manualRates?.[code];
     const r = store.rate(code);
@@ -114,7 +114,8 @@ export function renderPortfolio(root) {
   const s = st.settings;
   const b = s.base;
   const hasAccounts = (st.accounts || []).some((a) => !a.archived);
-  const hold = store.holdings(hasAccounts ? store.unassignedFilter() : null);
+  // только активы: обмены и остатки вне счетов; траты и доходы с главной сюда не попадают
+  const hold = store.portfolioHoldings();
   const entries = Object.entries(hold).filter(([, e]) => Math.abs(e.qty) > 1e-9);
   const crypto = entries.filter(([c]) => isCrypto(c)).sort((x, y) => y[1].value - x[1].value);
   const fiat = entries.filter(([c]) => !isCrypto(c)).sort((x, y) => (x[0] === b ? -1 : y[0] === b ? 1 : y[1].value - x[1].value));
@@ -185,7 +186,8 @@ export function renderPortfolio(root) {
         h('span', { class: 'row-title' }, d.name),
         h('span', { class: 'bar-track' }, h('span', { class: 'bar-fill', style: { '--c': isLent ? 'var(--mint)' : 'var(--violet)', '--w': `${Math.max(2, Math.round(prog * 100))}%` } })),
         h('span', { class: 'row-sub' }, rem === 0 ? 'погашено ✓' : [P.DEBT_KINDS[d.kind]?.label, d.payment ? `${money(d.payment, d.currency)}${d.day ? ` · ${d.day} числа` : ''}` : null, po?.date ? `до ${po.date.slice(5, 7)}.${po.date.slice(2, 4)}` : null].filter(Boolean).join(' · '))),
-      h('span', { class: 'row-end' }, h('span', { class: ['amount', isLent && 'inc'] }, money(isLent ? rem : -rem, d.currency)), h('span', { class: 'row-sub mono' }, `${Math.round(prog * 100)}%`))));
+      h('span', { class: 'row-end' }, h('span', { class: ['amount', isLent && 'inc'] }, money(isLent ? rem : -rem, d.currency)),
+        h('span', { class: 'row-sub mono' }, d.currency !== b && rem > 0 ? `≈ ${money((isLent ? rem : -rem) * store.rate(d.currency), b)} · ${Math.round(prog * 100)}%` : `${Math.round(prog * 100)}%`))));
   });
   dl.append(h('button', { class: 'row', onclick: () => openDebtEditor({}) },
     h('span', { class: 'cat-ico add-ico' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Добавить обязательство'), h('span', { class: 'row-sub' }, 'Кредит, рассрочка, ипотека, долг или «мне должны»'))));
@@ -228,5 +230,6 @@ export function renderPortfolio(root) {
     marketList);
   renderMarket();
 
-  if (s.livePrices) store.refreshMarket().catch(() => {});
+  // курсы в портфеле держим свежими: не старше минуты (дальше — автообновление в app.js)
+  if (s.livePrices) store.refreshMarket(false, 60 * 1000).catch(() => {});
 }

@@ -185,6 +185,7 @@ export function debtSheet(debt) {
       h('div', { class: 'debt-hero' },
         h('div', { class: 'micro' }, `${P.DEBT_KINDS[d.kind]?.label || ''} · осталось`),
         h('div', { class: ['debt-rem', 'mono', lent ? 'inc' : ''] }, money(rem, d.currency)),
+        d.currency !== store.base() && rem > 0 ? h('div', { class: 'muted small mono' }, `≈ ${money(rem * store.rate(d.currency), store.base())} по текущему курсу`) : null,
         h('div', { class: 'bar-track big' }, h('span', { class: 'bar-fill', style: { '--c': lent ? 'var(--mint)' : 'var(--violet)', '--w': `${Math.round(prog * 100)}%` } })),
         h('div', { class: 'debt-meta muted small' },
           h('span', {}, `${Math.round(prog * 100)}% из ${money(d.principal, d.currency)}`),

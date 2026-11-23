@@ -129,7 +129,7 @@ export function investSheet(inv) {
 
 function closeSheet(v) {
   const s = P.investStats(v);
-  const d = { profitStr: String(Math.round((s.matured ? s.expected : s.accrued) * 100) / 100).replace('.', ','), toAccountId: v.fromAccountId || '', returnPrincipal: true };
+  const d = { profitStr: String(Math.round((s.matured ? s.expected : s.accrued) * 100) / 100).replace('.', ','), toAccountId: store.account(v.fromAccountId) && !store.account(v.fromAccountId).archived ? v.fromAccountId : '', returnPrincipal: true };
   const sh = openSheet({
     title: 'Забрать доход', className: 'sheet-compact',
     content: h('div', { class: 'editor' },
@@ -137,7 +137,7 @@ function closeSheet(v) {
       h('input', { class: 'field mono', inputmode: 'decimal', value: d.profitStr, oninput: (e) => { d.profitStr = e.target.value; } }),
       h('p', { class: 'muted small' }, 'Запишется доходом с ярлыком «Доход от вложений» — попадёт в аналитику.'),
       accountPicker(d, 'toAccountId', 'Зачислить на счёт'),
-      h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, `Вернуть тело ${money(v.amount, v.currency)} на счёт`), h('span', { class: 'row-sub' }, 'Только если выбран счёт')),
+      h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, `Вернуть тело ${money(v.amount, v.currency)}`), h('span', { class: 'row-sub' }, 'На выбранный счёт или в портфель вне счетов')),
         h('input', { type: 'checkbox', class: 'switch', checked: true, onchange: (e) => { d.returnPrincipal = e.target.checked; } })),
       h('button', { class: 'btn btn-primary', onclick: async () => {
         const profit = parseAmount(d.profitStr) || 0;

@@ -112,6 +112,7 @@ const listeners = new Set();
 export function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function changed() {
   const p = vault.save();
+  p.catch(() => {}); // вызывающие без await (upsert и др.) не должны давать «необработанную» ошибку
   listeners.forEach((fn) => fn());
   return p;
 }
@@ -150,16 +151,16 @@ export function pairRate(from, to) {
 }
 
 let marketLoading = null;
-/** Обновить рыночные курсы (если включено). force — игнорировать 15-минутный кэш. */
-export function refreshMarket(force = false) {
+/** Обновить рыночные курсы (если включено). force — без кэша; maxAge — возраст кэша, мс (по умолчанию 15 мин). */
+export function refreshMarket(force = false, maxAge = 15 * 60 * 1000) {
   const st = state();
   if (!st?.settings.livePrices) return Promise.resolve(false);
-  if (!force && Date.now() - (st.market?.at || 0) < 15 * 60 * 1000) return Promise.resolve(false);
+  if (!force && Date.now() - (st.market?.at || 0) < maxAge) return Promise.resolve(false);
   if (marketLoading) return marketLoading;
   const prevCoins = st.market?.coins?.length ? st.market.coins : Object.entries(CRYPTO).map(([s, c]) => ({ s, n: c.name, id: c.cg }));
   setExtraNames(Object.fromEntries(prevCoins.filter((c) => c.id).map((c) => [c.s, { name: c.n, id: c.id }])));
   const extra = [...new Set([...BASE_CRYPTO, ...st.settings.currencies.filter(isCrypto)])];
-  marketLoading = fetchMarket(prevCoins, extra)
+  marketLoading = fetchMarket(prevCoins, extra, force ? null : st.market)
     .then(async (m) => {
       if (!vault.isUnlocked()) return false;
       const cur = state();
@@ -268,7 +269,7 @@ export function saveExchange(data, fee = 0) {
 
 /** Корректировка остатка: приводит количество валюты к фактическому, не влияя на доходы/расходы. */
 export function adjustBalance(cur, actual, rateValue) {
-  const h = holdings()[cur]?.qty || 0;
+  const h = portfolioHoldings()[cur]?.qty || 0;
   const diff = roundAmt(actual - h, cur);
   if (!diff) return Promise.resolve();
   state().txns.push(buildTxn({ type: 'adjust', amount: diff, currency: cur, rate: rateValue || rate(cur), note: 'Корректировка остатка' }));
@@ -279,8 +280,11 @@ export function adjustBalance(cur, actual, rateValue) {
 /**
  * Остатки по валютам и средняя себестоимость (в основной валюте).
  * { CUR: { qty, cost, value, pnl } }
+ * portfolio: true — только активы портфеля «вне счетов»: обмены и корректировки остатка.
+ *   Траты и доходы с главной сюда не попадают (они ведутся отдельно), а стороны операций,
+ *   привязанные к счёту (в т.ч. к удалённому), не считаются — они живут в балансе счёта.
  */
-export function holdings(filter = null) {
+export function holdings(filter = null, { portfolio = false } = {}) {
   const st = state();
   const out = {};
   const get = (c) => (out[c] ||= { qty: 0, cost: 0 });
@@ -296,12 +300,14 @@ export function holdings(filter = null) {
   const txns = (filter ? st.txns.filter(filter) : [...st.txns]).sort((a, b) => (a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1));
   const r = (c, rr) => (c === st.settings.base ? 1 : rr || 0);
   for (const t of txns) {
+    if (portfolio && (t.type === 'income' || t.type === 'expense')) continue;
     const sign = t.type === 'expense' ? -1 : 1;
     if (t.type === 'exchange') {
       const v = t.amount * r(t.currency, t.rate);
-      add(t.currency, -t.amount, 0);
-      add(t.toCurrency, t.toAmount, v || t.toAmount * r(t.toCurrency, t.toRate));
+      if (!portfolio || !t.accountId) add(t.currency, -t.amount, 0);
+      if (!portfolio || !t.toAccountId) add(t.toCurrency, t.toAmount, v || t.toAmount * r(t.toCurrency, t.toRate));
     } else {
+      if (portfolio && t.accountId) continue;
       add(t.currency, sign * t.amount, Math.abs(t.amount) * r(t.currency, t.rate));
     }
   }
@@ -313,6 +319,9 @@ export function holdings(filter = null) {
   }
   return out;
 }
+
+/** Активы портфеля вне счетов (без трат и доходов с главной). */
+export const portfolioHoldings = () => holdings(null, { portfolio: true });
 
 function tomb(id) {
   const st = state();
@@ -592,6 +601,18 @@ export function accountBalances() {
   return out;
 }
 
+/** Удалить счёт: операции остаются в истории трат и доходов, ссылки на счёт снимаются. */
+export function deleteAccount(id) {
+  const st = state();
+  for (const coll of ['invest', 'recurring', 'templates']) {
+    for (const x of st[coll] || []) {
+      if (x.fromAccountId === id) { x.fromAccountId = ''; touch(x); }
+      if (x.accountId === id) { x.accountId = ''; touch(x); }
+    }
+  }
+  return removeItem('accounts', id);
+}
+
 export const activeAccounts = () => (state().accounts || []).filter((a) => !a.archived);
 export const account = (id) => (state().accounts || []).find((a) => a.id === id);
 
@@ -678,13 +699,16 @@ export function closeInvestment(inv, { profit = 0, toAccountId = '', returnPrinc
   const v = findItem('invest', inv.id);
   if (!v) return Promise.resolve();
   let profitTxn = null;
+  const acc = toAccountId && account(toAccountId) ? toAccountId : '';
   if (profit > 0) {
-    const t = buildTxn({ type: 'income', amount: profit, currency: v.currency, rate: rate(v.currency), categoryId: categoryByName('Доход от вложений')?.id || categoryByName('Другое')?.id, note: `Доход: ${v.name}`, date, accountId: toAccountId });
+    const t = buildTxn({ type: 'income', amount: profit, currency: v.currency, rate: rate(v.currency), categoryId: categoryByName('Доход от вложений')?.id || categoryByName('Другое')?.id, note: `Доход: ${v.name}`, date, accountId: acc });
     st.txns.push(t);
     profitTxn = t.id;
   }
-  if (returnPrincipal && toAccountId) {
-    st.txns.push(buildTxn({ type: 'adjust', amount: v.amount, currency: v.currency, rate: rate(v.currency), accountId: toAccountId, note: `Возврат из вложения: ${v.name}`, date }));
+  // без счёта деньги возвращаются в портфель «вне счетов» (доход там не виден — он ведётся на главной)
+  const back = (returnPrincipal ? v.amount : 0) + (acc ? 0 : Math.max(0, profit));
+  if (back > 0) {
+    st.txns.push(buildTxn({ type: 'adjust', amount: back, currency: v.currency, rate: rate(v.currency), accountId: acc, note: `Возврат из вложения: ${v.name}`, date }));
   }
   Object.assign(v, { closed: true, closedAt: date, profit: roundAmt(profit, v.currency), profitTxn, updatedAt: Date.now() });
   return changed();

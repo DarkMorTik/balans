@@ -1,5 +1,5 @@
 // Планировщик: регулярные платежи, обязательства, задачи, цели. Чистые функции.
-import { addDays, daysInMonth, monthStart, addMonths, weekday, round2, diffDays, dayKey } from './util.js';
+import { addDays, daysInMonth, monthStart, addMonths, weekday, round2, roundAmt, diffDays, dayKey } from './util.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -64,10 +64,10 @@ export const DEBT_KINDS = {
 };
 
 export function debtPaid(d) {
-  return round2((d.initialPaid || 0) + (d.payments || []).reduce((a, p) => a + p.amount, 0));
+  return roundAmt((d.initialPaid || 0) + (d.payments || []).reduce((a, p) => a + p.amount, 0), d.currency);
 }
 export function debtRemaining(d) {
-  return Math.max(0, round2(d.principal - debtPaid(d)));
+  return Math.max(0, roundAmt(d.principal - debtPaid(d), d.currency));
 }
 export function debtProgress(d) {
   return d.principal > 0 ? Math.min(1, debtPaid(d) / d.principal) : 0;

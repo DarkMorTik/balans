@@ -1,6 +1,6 @@
 // Рыночные курсы: фиат (open.er-api.com) и топ-100 криптовалют (CoinGecko), резерв — currency-api (jsDelivr).
 // В запросах уходят только коды валют. Никаких данных о пользователе или его операциях.
-// Результат: { at, usd: { CODE: цена 1 единицы в USD }, coins: [{ s, n, id, rank }] }
+// Результат: { at, usd: { CODE: цена 1 единицы в USD }, coins: [{ s, n, id, rank }], fx, fxAt }
 
 const OPTS = { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', mode: 'cors' };
 const FIAT_CODES = /^[A-Z]{3}$/;
@@ -58,11 +58,15 @@ async function fromCurrencyApi() {
   return usd;
 }
 
+const FX_TTL = 60 * 60 * 1000; // фиат меняется медленно — обновляем раз в час, крипту — при каждом запросе
+
 /**
  * Загрузить актуальные курсы. prevCoins — прошлый список монет (если CoinGecko недоступен).
+ * prev — прошлый результат: свежие курсы фиата берутся из него, чтобы не дёргать сервис каждую минуту.
  */
-export async function fetchMarket(prevCoins = [], extra = []) {
-  const [fx, cg] = await Promise.allSettled([fiatFromErApi(), topCoinsFromCoinGecko()]);
+export async function fetchMarket(prevCoins = [], extra = [], prev = null) {
+  const fxFresh = prev?.fx && Date.now() - (prev.fxAt || 0) < FX_TTL && Object.keys(prev.fx).length > 5;
+  const [fx, cg] = await Promise.allSettled([fxFresh ? Promise.resolve(prev.fx) : fiatFromErApi(), topCoinsFromCoinGecko()]);
   const usd = {};
   let coins = prevCoins;
   let fallback = null;
@@ -105,5 +109,7 @@ export async function fetchMarket(prevCoins = [], extra = []) {
   }
   usd.USD = 1;
   if (Object.keys(usd).length < 5) throw new Error('Нет связи с сервисами курсов');
-  return { at: Date.now(), usd, coins };
+  const out = { at: Date.now(), usd, coins };
+  if (fx.status === 'fulfilled') { out.fx = fx.value; out.fxAt = fxFresh ? prev.fxAt : out.at; }
+  return out;
 }
