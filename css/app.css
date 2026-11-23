@@ -921,3 +921,12 @@ button.row:active { background: var(--fill); }
 }
 
 @media (max-width: 420px) { .report-bar { gap: 6px; } .report-bar .micro { min-width: 0; font-size: 9.5px; } }
+
+/* при открытой клавиатуре нижний отступ под «домашнюю полоску» не нужен */
+body.kb .sheet { padding-bottom: 0; }
+
+/* вложения */
+.invest-preview { display: flex; gap: 18px; flex-wrap: wrap; padding: 4px; }
+.invest-preview:empty { display: none; }
+.invest-row .row-main { gap: 4px; }
+.invest-row.matured .cat-ico { --c: var(--mint); }

@@ -58,3 +58,21 @@ test('goal stats', () => {
   assert.equal(s.left, 1000);
   assert.ok(s.perMonth > 160 && s.perMonth < 170);
 });
+
+test('investments: stats and maturity events', () => {
+  const v = { id: 'i1', name: 'WhiteBit 60', amount: 1000, currency: 'USDT', apr: 18.25, start: '2026-11-01', end: '2026-12-31' };
+  const s = P.investStats(v, '2026-11-21');
+  assert.equal(s.total, 60);
+  assert.equal(s.elapsed, 20);
+  assert.equal(s.left, 40);
+  assert.equal(s.expected, 30); // 1000 * 18.25% * 60/365
+  assert.equal(s.accrued, 10);
+  const c = P.investStats({ ...v, compound: true }, '2026-11-21');
+  assert.ok(c.expected > 30 && c.expected < 30.5);
+  const ev = P.plannedEvents({ recurring: [], debts: [], invest: [v, { ...v, id: 'i2', closed: true }] }, '2026-12-01', '2027-01-01', '2026-11-21');
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].kind, 'invest');
+  assert.equal(ev[0].amount, 30);
+  // доход от вложения не считается «зарплатой» в прогнозе
+  assert.equal(P.paydayForecast({ recurring: [], debts: [], invest: [v] }, 500, () => 1, '2026-11-21'), null);
+});

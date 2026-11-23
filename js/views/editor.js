@@ -128,11 +128,9 @@ function rateField(d, onChange) {
 }
 
 // ---------- счёт ----------
+/** Счёт по умолчанию — никакой: привязку к счёту пользователь выбирает сам. */
 export function defaultAccount() {
-  const accs = store.activeAccounts();
-  if (!accs.length) return '';
-  const last = store.settings().lastAccount;
-  return accs.some((a) => a.id === last) ? last : accs[0].id;
+  return '';
 }
 
 /** Выбор счёта (показывается, только если счета созданы). */
@@ -143,9 +141,9 @@ export function accountPicker(d, key = 'accountId', label = 'Счёт') {
   const row = h('div', { class: 'kind-row acc-row' });
   const render = () => {
     clear(row);
-    accs.forEach((a) => row.append(h('button', { type: 'button', class: ['chip', d[key] === a.id && 'active'], onclick: () => { d[key] = a.id; render(); } },
-      `${a.icon || store.ACCOUNT_KINDS[a.kind]?.icon || '▫'} ${a.name}`)));
     row.append(h('button', { type: 'button', class: ['chip', !d[key] && 'active'], onclick: () => { d[key] = ''; render(); } }, 'Без счёта'));
+    accs.forEach((a) => row.append(h('button', { type: 'button', class: ['chip', d[key] === a.id && 'active'], onclick: () => { d[key] = d[key] === a.id ? '' : a.id; render(); } },
+      `${a.icon || store.ACCOUNT_KINDS[a.kind]?.icon || '▫'} ${a.name}`)));
   };
   render();
   wrap.append(h('div', { class: 'section-label micro' }, label), row);
@@ -239,7 +237,6 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     if (!d.categoryId) { toast('Выберите ярлык'); return; }
     if (d.currency !== st.base && !(d.rate > 0)) { toast('Нет курса — введите его вручную'); return; }
     await store.saveTxn({ ...(txn || {}), type: d.type, amount, currency: d.currency, rate: d.rate, categoryId: d.categoryId, note: d.note, date: d.date, accountId: d.accountId });
-    if (d.accountId) st.lastAccount = d.accountId;
     if (d.saveTpl) {
       const c = store.category(d.categoryId);
       store.upsert('templates', { name: d.note || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, accountId: d.accountId, note: d.note });

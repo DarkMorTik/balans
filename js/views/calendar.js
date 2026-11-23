@@ -6,6 +6,7 @@ import { openTxnEditor } from './editor.js';
 import { txnRow } from './home.js';
 import { openRecurringEditor, openTaskEditor, debtSheet } from './planner-sheets.js';
 import { buildICS, rruleFor } from '../ics.js';
+import { investSheet } from './invest.js';
 import { confirmSheet, toast } from '../sheet.js';
 
 const ui = { month: monthStart(dayKey()), sel: dayKey() };
@@ -18,14 +19,15 @@ export function eventRow(e, { showDate = false } = {}) {
     : h('button', { class: ['pay-chip', inc && 'income', e.overdue && !inc && 'overdue'], onclick: (ev) => {
       ev.stopPropagation();
       if (e.kind === 'recurring') store.payRecurring(e.ref, e.date);
+      else if (e.kind === 'invest') investSheet(e.ref);
       else debtSheet(e.ref);
-    } }, inc ? 'Получено' : 'Оплатить');
+    } }, e.kind === 'invest' ? 'Забрать' : inc ? 'Получено' : 'Оплатить');
   const when = e.date === today ? 'сегодня' : e.date === addDays(today, 1) ? 'завтра' : shortDate(e.date);
-  return h('div', { class: ['row', 'event', e.paid && 'is-paid'], role: 'button', tabindex: '0', onclick: () => (e.kind === 'recurring' ? openRecurringEditor({ item: e.ref }) : debtSheet(e.ref)) },
+  return h('div', { class: ['row', 'event', e.paid && 'is-paid'], role: 'button', tabindex: '0', onclick: () => (e.kind === 'recurring' ? openRecurringEditor({ item: e.ref }) : e.kind === 'invest' ? investSheet(e.ref) : debtSheet(e.ref)) },
     h('span', { class: 'cat-ico swap' }, e.icon),
     h('span', { class: 'row-main' },
       h('span', { class: 'row-title' }, e.title),
-      h('span', { class: ['row-sub', e.overdue && !inc && 'neg'] }, e.overdue ? `${inc ? 'ожидался' : 'просрочено'} · ${when}` : showDate ? `${when} · ${inc ? 'доход' : e.kind === 'debt' ? 'кредит' : 'регулярный'}` : inc ? 'регулярный доход' : e.kind === 'debt' ? 'обязательство' : 'регулярный платёж')),
+      h('span', { class: ['row-sub', e.overdue && !inc && 'neg'] }, e.kind === 'invest' ? `${e.overdue ? 'срок окончен' : 'окончание'} · ${when} · тело ${money(e.principal, e.currency)}` : e.overdue ? `${inc ? 'ожидался' : 'просрочено'} · ${when}` : showDate ? `${when} · ${inc ? 'доход' : e.kind === 'debt' ? 'кредит' : 'регулярный'}` : inc ? 'регулярный доход' : e.kind === 'debt' ? 'обязательство' : 'регулярный платёж')),
     h('span', { class: 'row-end' }, h('span', { class: ['amount', inc && 'inc'] }, money(inc ? e.amount : -e.amount, e.currency, { sign: inc })), btn));
 }
 
@@ -146,7 +148,7 @@ export function renderCalendar(root) {
   list.append(h('button', { class: 'row', onclick: () => openRecurringEditor({ date: ui.sel >= today ? ui.sel : today, type: 'income' }) },
     h('span', { class: 'cat-ico add-ico inc' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Регулярный доход'), h('span', { class: 'row-sub' }, 'Зарплата, аванс, аренда от жильцов'))));
   root.append(list);
-  if (rec.length || (st.debts || []).some((d) => d.payment > 0 && d.day)) {
+  if (rec.length || (st.debts || []).some((d) => d.payment > 0 && d.day) || (st.invest || []).some((v) => !v.closed)) {
     root.append(h('button', { class: 'btn btn-plain ics-btn', onclick: exportToCalendar }, '📅 Напоминания в Календарь iPhone'));
   }
 }
@@ -180,6 +182,11 @@ async function exportToCalendar() {
     const start = P.occurrences({ freq: 'monthly', day: d.day, start: today }, today, addDays(today, 40))[0];
     if (!start) continue;
     events.push({ uid: `debt-${d.id}`, title: `↑ ${d.name} · ${money(d.payment, d.currency)}`, description: `Осталось ${po.n} платеж(ей)`, start, rrule: `${rruleFor({ freq: 'monthly', day: d.day })};COUNT=${po.n}` });
+  }
+  for (const v of st.invest || []) {
+    if (v.closed || v.end < today) continue;
+    const s = P.investStats(v, today);
+    events.push({ uid: `inv-${v.id}`, title: `◈ Окончание: ${v.name} · +${money(s.expected, v.currency)}`, description: `Тело ${money(v.amount, v.currency)}. Заберите доход в приложении.`, start: v.end, alarms: ['-P1DT15H', '-PT15H', 'PT9H'] });
   }
   if (!events.length) return toast('Нет активных платежей');
   const file = new File([buildICS(events)], 'balans-platezhi.ics', { type: 'text/calendar' });

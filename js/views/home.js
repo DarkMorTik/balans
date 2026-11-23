@@ -24,7 +24,8 @@ function todayTicket(st, today) {
   const tasks = P.tasksFor(st, today);
   const over = P.overdueTasks(st, today);
   const pay = P.paydayForecast(st, availableNow(), store.rate, today);
-  if (!events.length && !tasks.length && !over.length && !pay) return null;
+  const maturing = P.investEvents(st, addDays(today, -60), addDays(today, 8), today);
+  if (!events.length && !tasks.length && !over.length && !pay && !maturing.length) return null;
   const done = tasks.filter((t) => P.isDone(t, today)).length;
   const base = st.settings.base;
   const t = h('section', { class: 'ticket' },
@@ -39,6 +40,10 @@ function todayTicket(st, today) {
         pay.free < 0
           ? `Не хватает ${money(-pay.free, base)}: до дохода спишется ${money(pay.plannedBefore, base)}.`
           : `Свободно ${money(pay.free, base)}${pay.plannedBefore ? ` после списаний на ${money(pay.plannedBefore, base)}` : ''}.`)));
+    if (events.length || tasks.length || over.length) t.append(h('div', { class: 'perf' }));
+  }
+  if (maturing.length) {
+    t.append(h('div', { class: 'ticket-label micro' }, 'Вложения заканчиваются'), h('div', { class: 'list' }, maturing.slice(0, 3).map((e) => eventRow(e, { showDate: true }))));
     if (events.length || tasks.length || over.length) t.append(h('div', { class: 'perf' }));
   }
   if (events.length) {

@@ -29,12 +29,14 @@ const DEFAULT_CATEGORIES = [
   ['Крипто', '₿', 'both', '#e8c66a'],
   ['Комиссии', '%', 'expense', '#9aa39a'],
   ['Кредиты', '🏦', 'expense', '#7aa7ff'],
+  ['Доход от вложений', '💹', 'income', '#7fe0c2'],
   ['Подарки', '🎁', 'both', '#ff453a'],
   ['Другое', '•', 'both', '#8e8e93'],
 ];
 const EXTRA_V2 = ['Крипто', 'Комиссии'];
 const EXTRA_V3 = ['Кредиты'];
-const PLANNER_KEYS = ['recurring', 'debts', 'tasks', 'notes', 'goals', 'accounts', 'templates'];
+const EXTRA_V5 = ['Доход от вложений'];
+const PLANNER_KEYS = ['recurring', 'debts', 'tasks', 'notes', 'goals', 'accounts', 'templates', 'invest'];
 
 export function initialState(base = 'RUB') {
   return {
@@ -61,7 +63,8 @@ export function initialState(base = 'RUB') {
     templates: [], // шаблоны быстрых операций
     focus: {},     // минуты фокуса по дням
     deleted: {},   // журнал удалений (для синхронизации между устройствами)
-    schema: 4,
+    invest: [],    // инвестиции, вклады, стейкинг
+    schema: 5,
   };
 }
 
@@ -77,7 +80,7 @@ function addCategories(st, names) {
 export function migrate() {
   const st = state();
   const v = st.schema || 1;
-  if (v >= 4) return;
+  if (v >= 5) return;
   if (v < 2) {
     addCategories(st, EXTRA_V2);
     st.settings.livePrices = true;
@@ -89,7 +92,8 @@ export function migrate() {
   st.focus ||= {};
   st.deleted ||= {};
   st.settings.theme ||= 'auto';
-  st.schema = 4;
+  addCategories(st, EXTRA_V5);
+  st.schema = 5;
   return vault.save();
 }
 
@@ -651,4 +655,46 @@ export function unassignedFilter() {
   const accs = state().accounts || [];
   const first = accs.length ? Math.min(...accs.map((a) => a.createdAt || 0)) : 0;
   return (t) => !t.accountId && !t.toAccountId && (t.createdAt || 0) >= first;
+}
+
+// ---------- инвестиции и стейкинг ----------
+/** Создать вложение; при указании счёта сумма списывается с него (корректировкой, не тратой). */
+export function addInvestment(data, fromAccountId = '') {
+  const st = state();
+  const inv = upsert('invest', { ...data, fromAccountId: fromAccountId || '', closed: false });
+  if (fromAccountId && !data.id) {
+    st.txns.push(buildTxn({ type: 'adjust', amount: -inv.amount, currency: inv.currency, rate: rate(inv.currency), accountId: fromAccountId, note: `В вложение: ${inv.name}`, date: inv.start }));
+    changed();
+  }
+  return inv;
+}
+
+/**
+ * Закрыть вложение: доход записывается как доход (ярлык «Доход от вложений»),
+ * тело при желании возвращается на счёт.
+ */
+export function closeInvestment(inv, { profit = 0, toAccountId = '', returnPrincipal = true, date = dayKey() } = {}) {
+  const st = state();
+  const v = findItem('invest', inv.id);
+  if (!v) return Promise.resolve();
+  let profitTxn = null;
+  if (profit > 0) {
+    const t = buildTxn({ type: 'income', amount: profit, currency: v.currency, rate: rate(v.currency), categoryId: categoryByName('Доход от вложений')?.id || categoryByName('Другое')?.id, note: `Доход: ${v.name}`, date, accountId: toAccountId });
+    st.txns.push(t);
+    profitTxn = t.id;
+  }
+  if (returnPrincipal && toAccountId) {
+    st.txns.push(buildTxn({ type: 'adjust', amount: v.amount, currency: v.currency, rate: rate(v.currency), accountId: toAccountId, note: `Возврат из вложения: ${v.name}`, date }));
+  }
+  Object.assign(v, { closed: true, closedAt: date, profit: roundAmt(profit, v.currency), profitTxn, updatedAt: Date.now() });
+  return changed();
+}
+
+/** Продлить: новое вложение с теми же условиями от даты окончания старого. */
+export function renewInvestment(inv, amount) {
+  const days = Math.max(1, Math.round((new Date(inv.end) - new Date(inv.start)) / 864e5));
+  const start = inv.end > dayKey() ? inv.end : dayKey();
+  const d = new Date(start); d.setDate(d.getDate() + days);
+  const end = d.toISOString().slice(0, 10);
+  return upsert('invest', { name: inv.name, kind: inv.kind, amount: amount || inv.amount, currency: inv.currency, apr: inv.apr, compound: inv.compound, start, end, note: inv.note, closed: false });
 }

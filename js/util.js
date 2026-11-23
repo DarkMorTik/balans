@@ -92,8 +92,9 @@ export const roundAmt = (n, cur) => (isCrypto(cur) ? round8(n) : round2(n));
 // ---------- Деньги ----------
 const nfCache = new Map();
 const plainNf = new Map();
-function cryptoFormat(abs, cur) {
-  const frac = abs >= 1000 ? 2 : abs >= 1 ? 4 : 8;
+const STABLE = new Set(['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'USDE', 'PYUSD', 'USDS', 'BUSD']);
+function cryptoFormat(abs, cur, fracOverride) {
+  const frac = fracOverride ?? (STABLE.has(cur) || abs >= 1000 ? 2 : abs >= 1 ? 4 : 8);
   if (!plainNf.has(frac)) plainNf.set(frac, new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: frac }));
   return `${plainNf.get(frac).format(abs)} ${cur}`;
 }
@@ -115,7 +116,7 @@ function nf(cur, maxFrac) {
 export function money(v, cur, { sign = false, frac } = {}) {
   const abs = Math.abs(v);
   const maxFrac = frac ?? (abs >= 10000 ? 0 : 2);
-  const str = isCrypto(cur) ? cryptoFormat(abs, cur) : nf(cur, maxFrac).format(abs);
+  const str = isCrypto(cur) ? cryptoFormat(abs, cur, frac) : nf(cur, maxFrac).format(abs);
   if (sign) return (v < 0 ? '−' : v > 0 ? '+' : '') + str;
   return (v < 0 ? '−' : '') + str;
 }

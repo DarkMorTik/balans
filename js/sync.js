@@ -1,7 +1,7 @@
 // Слияние данных двух устройств (iPhone ↔ iPad) без сервера: по id и времени изменения,
 // с учётом журнала удалений. Чистая функция.
 
-const COLLS = ['txns', 'categories', 'recurring', 'debts', 'tasks', 'notes', 'goals', 'accounts', 'templates'];
+const COLLS = ['txns', 'categories', 'recurring', 'debts', 'tasks', 'notes', 'goals', 'accounts', 'templates', 'invest'];
 const stamp = (x) => x?.updatedAt || x?.createdAt || 0;
 
 export function mergeStates(local, remote) {

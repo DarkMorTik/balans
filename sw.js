@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэш оболочки приложения. Никаких внешних запросов.
-const VERSION = 'balans-v7';
+const VERSION = 'balans-v8';
 const SHELL = [
   './',
   'index.html',
@@ -36,6 +36,7 @@ const SHELL = [
   'js/views/budget.js',
   'js/views/import.js',
   'js/views/focus.js',
+  'js/views/invest.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',

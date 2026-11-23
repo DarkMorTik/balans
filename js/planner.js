@@ -124,6 +124,7 @@ export function plannedEvents(state, from, to, today = dayKey()) {
       out.push({ date: e.date, kind: 'debt', type: 'expense', ref: d, title: d.name, amount: Math.min(d.payment, debtRemaining(d) || d.payment), currency: d.currency, icon: DEBT_KINDS[d.kind]?.icon || '🏦', paid: e.paid, overdue: !e.paid && e.date < today });
     }
   }
+  out.push(...investEvents(state, from, to, today));
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.title.localeCompare(b.title)));
 }
 
@@ -175,7 +176,7 @@ export function goalStats(g, today = dayKey()) {
 export function paydayForecast(state, available, rateOf, today = dayKey()) {
   const horizon = addDays(today, 62);
   const events = plannedEvents(state, today, horizon, today).filter((e) => !e.paid);
-  const income = events.find((e) => e.type === 'income' && e.date >= today);
+  const income = events.find((e) => e.type === 'income' && e.kind === 'recurring' && e.date >= today);
   if (!income) return null;
   const plannedBefore = events
     .filter((e) => e.type !== 'income' && e.date < income.date)
@@ -201,4 +202,47 @@ export function habitWeek(t, today = dayKey(), n = 7) {
   const due = days.filter((x) => x.due).length;
   const done = days.filter((x) => x.done).length;
   return { days, rate: due ? done / due : 0, done, due };
+}
+
+// ---------- инвестиции и стейкинг ----------
+export const INVEST_KINDS = {
+  staking: { label: 'Стейкинг', icon: '◈' },
+  deposit: { label: 'Вклад', icon: '🏦' },
+  savings: { label: 'Накопительный', icon: '🐷' },
+  bond: { label: 'Облигации', icon: '📜' },
+  other: { label: 'Другое', icon: '📈' },
+};
+
+/**
+ * Расчёт позиции: срок, прогресс, накоплено к сегодняшнему дню и к концу срока.
+ * inv: { amount, apr (% годовых), start, end, compound }
+ */
+export function investStats(inv, today = dayKey()) {
+  const total = Math.max(1, diffDays(inv.start, inv.end));
+  const elapsedRaw = diffDays(inv.start, today);
+  const elapsed = Math.min(total, Math.max(0, elapsedRaw));
+  const left = Math.max(0, diffDays(today, inv.end));
+  const rate = (inv.apr || 0) / 100;
+  const grow = (days) => (inv.compound ? inv.amount * ((1 + rate / 365) ** days - 1) : inv.amount * rate * (days / 365));
+  return {
+    total, elapsed, left,
+    progress: elapsed / total,
+    accrued: Math.round(grow(elapsed) * 1e6) / 1e6,
+    expected: Math.round(grow(total) * 1e6) / 1e6,
+    matured: today >= inv.end,
+    started: elapsedRaw >= 0,
+  };
+}
+
+/** События окончания вложений (для календаря и напоминаний). */
+export function investEvents(state, from, to, today = dayKey()) {
+  return (state.invest || [])
+    .filter((v) => !v.closed && v.end >= from && v.end < to)
+    .map((v) => {
+      const s = investStats(v, today);
+      return {
+        date: v.end, kind: 'invest', type: 'income', ref: v, title: v.name, amount: s.expected, principal: v.amount,
+        currency: v.currency, icon: INVEST_KINDS[v.kind]?.icon || '📈', paid: false, overdue: v.end < today,
+      };
+    });
 }

@@ -8,6 +8,7 @@ import { guilloche } from '../guilloche.js';
 import * as P from '../planner.js';
 import { openDebtEditor, debtSheet } from './planner-sheets.js';
 import { openAccountEditor, accountSheet, openTransferSheet } from './money-sheets.js';
+import { investSection } from './invest.js';
 
 const ui = { marketAll: false, marketQ: '' };
 
@@ -118,7 +119,8 @@ export function renderPortfolio(root) {
   const crypto = entries.filter(([c]) => isCrypto(c)).sort((x, y) => y[1].value - x[1].value);
   const fiat = entries.filter(([c]) => !isCrypto(c)).sort((x, y) => (x[0] === b ? -1 : y[0] === b ? 1 : y[1].value - x[1].value));
   const accBal0 = store.accountBalances();
-  const total = entries.reduce((a, [, e]) => a + e.value, 0) + (st.accounts || []).filter((a) => !a.archived).reduce((a, x) => a + (accBal0[x.id]?.inBase || 0), 0);
+  const investTotal = (st.invest || []).filter((v) => !v.closed).reduce((a, v) => a + (v.amount + P.investStats(v).accrued) * store.rate(v.currency), 0);
+  const total = entries.reduce((a, [, e]) => a + e.value, 0) + (st.accounts || []).filter((a) => !a.archived).reduce((a, x) => a + (accBal0[x.id]?.inBase || 0), 0) + investTotal;
   const cTotal = crypto.reduce((a, [, e]) => a + e.value, 0);
   const cCost = crypto.reduce((a, [, e]) => a + e.cost, 0);
   const cPnl = cTotal - cCost;
@@ -156,6 +158,7 @@ export function renderPortfolio(root) {
   accList.append(h('button', { class: 'acc-card add', onclick: () => openAccountEditor({}) }, h('span', { class: 'acc-plus' }, '+'), h('span', { class: 'acc-name' }, accs.length ? 'Счёт' : 'Добавить счёт'), h('span', { class: 'acc-sub' }, 'карта, наличные, биржа')));
   root.append(accList);
   if (accs.length >= 2) root.append(h('button', { class: 'btn btn-plain transfer-btn', onclick: () => openTransferSheet({}) }, '⇄ Перевод между счетами'));
+  investSection(root, b);
 
   const status = h('span', { class: 'micro' }, s.livePrices ? `Курсы ${ago(s.pricesAt)}` : 'Онлайн-курсы выключены в настройках');
   const refreshBtn = h('button', { class: 'chip small', disabled: !s.livePrices, onclick: async () => {
@@ -188,7 +191,7 @@ export function renderPortfolio(root) {
     h('span', { class: 'cat-ico add-ico' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Добавить обязательство'), h('span', { class: 'row-sub' }, 'Кредит, рассрочка, ипотека, долг или «мне должны»'))));
   root.append(dl);
 
-  if (!entries.length) {
+  if (!entries.length && !accs.length && !(st.invest || []).length) {
     root.append(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '₿'), 'В портфеле пока пусто',
       h('div', { class: 'muted small' }, 'Запишите покупку криптовалюты через «Купить / обменять» или укажите текущий остаток.')));
   }
