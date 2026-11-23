@@ -1,18 +1,17 @@
 // Счета и переводы, шаблоны быстрых операций, умный и голосовой ввод.
-import { h, clear, parseAmount, money, dayKey, isCrypto, currencySymbol, roundAmt, haptic } from '../util.js';
+import { h, clear, parseAmount, money, dayKey, shortDate, isCrypto, currencySymbol, roundAmt, haptic } from '../util.js';
 import * as store from '../store.js';
 import { openSheet, confirmSheet, toast } from '../sheet.js';
-import { segmented, pickCurrency, dateRow, openTxnEditor, defaultAccount } from './editor.js';
+import { segmented, pickCurrency, openTxnEditor } from './editor.js';
 import { parseQuick, guessCategory } from '../nlp.js';
-import { txnListSheet } from './home.js';
 
 const label = (t) => h('div', { class: 'section-label micro' }, t);
 
-// ---------- счёт ----------
+// ---------- счёт (капитал) ----------
 export function openAccountEditor({ item = null } = {}) {
   const d = {
     name: item?.name || '', kind: item?.kind || 'card', currency: item?.currency || store.base(),
-    initialStr: item ? String(item.initial || 0).replace('.', ',') : '', archived: !!item?.archived,
+    balanceStr: item ? String(item.balance || 0).replace('.', ',') : '', archived: !!item?.archived,
   };
   const kinds = h('div', { class: 'kind-row' });
   const renderKinds = () => {
@@ -21,17 +20,20 @@ export function openAccountEditor({ item = null } = {}) {
   };
   const curBtn = h('button', { type: 'button', class: 'cur-btn' });
   const syncCur = () => { curBtn.textContent = d.currency; };
-  curBtn.addEventListener('click', () => {
-    if (item && store.state().txns.some((t) => t.accountId === item.id || t.toAccountId === item.id)) return toast('Валюту счёта с операциями менять нельзя');
-    pickCurrency({ current: d.currency, onPick: (c) => { d.currency = c; syncCur(); } });
-  });
+  curBtn.addEventListener('click', () => pickCurrency({ current: d.currency, onPick: (c) => { d.currency = c; syncCur(); } }));
   syncCur();
   async function save() {
     if (!d.name.trim()) return toast('Введите название счёта');
-    const acc = store.upsert('accounts', { ...(item || {}), name: d.name.trim(), kind: d.kind, icon: store.ACCOUNT_KINDS[d.kind].icon, currency: d.currency, initial: parseAmount(d.initialStr) || 0, archived: d.archived });
-    if (!store.settings().lastAccount) store.settings().lastAccount = acc.id;
+    const balance = parseAmount(d.balanceStr) || 0;
+    const changedBal = !item || balance !== (item.balance || 0) || d.currency !== item.currency;
+    const acc = store.upsert('accounts', {
+      ...(item || {}), name: d.name.trim(), kind: d.kind, icon: store.ACCOUNT_KINDS[d.kind].icon, currency: d.currency, balance, archived: d.archived,
+      history: changedBal ? [...(item?.history || []), { date: dayKey(), balance, note: item ? 'изменено' : 'открыт' }].slice(-60) : item.history,
+      checkedAt: changedBal ? Date.now() : item?.checkedAt,
+    });
+    if (changedBal) store.snapshotCapital();
     sh.close();
-    toast(item ? 'Сохранено' : 'Счёт добавлен');
+    toast(item ? 'Сохранено' : `Счёт «${acc.name}» добавлен`);
   }
   const sh = openSheet({
     title: item ? 'Счёт' : 'Новый счёт',
@@ -39,18 +41,19 @@ export function openAccountEditor({ item = null } = {}) {
     content: h('div', { class: 'editor' },
       kinds,
       label('Название'),
-      h('input', { class: 'field', placeholder: 'Например, «Карта Monobank» или «Наличные»', maxlength: '40', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
-      label('Начальный остаток и валюта'),
-      h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.initialStr, oninput: (e) => { d.initialStr = e.target.value; } }), curBtn),
-      h('p', { class: 'muted small' }, 'Сколько на счету сейчас. Операции, записанные раньше без счёта, считаются уже учтёнными в этом остатке. Позже остаток можно сверить кнопкой «Сверить остаток».'),
-      item && h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'В архиве'), h('span', { class: 'row-sub' }, 'Скрыть из выбора, история сохранится')),
+      h('input', { class: 'field', placeholder: 'Например, «Карта Monobank», «Ledger», «WhiteBit»', maxlength: '40', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
+      label('Сколько на счету сейчас'),
+      h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.balanceStr, oninput: (e) => { d.balanceStr = e.target.value; } }), curBtn),
+      h('p', { class: 'muted small' }, 'Это часть капитала. Ежедневные траты и доходы его не меняют — остаток вы сверяете сами, когда подводите баланс.'),
+      item && h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'В архиве'), h('span', { class: 'row-sub' }, 'Не учитывать в капитале, но сохранить историю')),
         h('input', { type: 'checkbox', class: 'switch', checked: d.archived, onchange: (e) => { d.archived = e.target.checked; } })),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить счёт'),
       item && h('button', { class: 'btn btn-plain danger', onclick: async () => {
-        if (!(await confirmSheet(`Удалить счёт «${item.name}»?`, { detail: 'Операции останутся, но будут без счёта. Чтобы просто скрыть счёт, отправьте его в архив.' }))) return;
-        store.state().txns.forEach((t) => { if (t.accountId === item.id) delete t.accountId; if (t.toAccountId === item.id) delete t.toAccountId; });
+        if (!(await confirmSheet(`Удалить счёт «${item.name}»?`, { detail: 'Счёт пропадёт из капитала. Траты и доходы в дневнике не изменятся.' }))) return;
         await store.removeItem('accounts', item.id);
+        store.snapshotCapital();
         sh.close();
+        toast('Счёт удалён');
       } }, 'Удалить счёт')),
   });
   renderKinds();
@@ -64,24 +67,25 @@ export function accountSheet(acc) {
     if (!a) return;
     const bal = store.accountBalances()[a.id];
     let actual = '';
+    const hist = [...(a.history || [])].reverse().slice(0, 8);
     body.append(
       h('div', { class: 'debt-hero' },
-        h('div', { class: 'micro' }, `${store.ACCOUNT_KINDS[a.kind]?.label || 'Счёт'} · баланс`),
+        h('div', { class: 'micro' }, `${store.ACCOUNT_KINDS[a.kind]?.label || 'Счёт'}${a.checkedAt ? ` · сверено ${ago(a.checkedAt)}` : ''}`),
         h('div', { class: ['debt-rem', 'mono', bal.balance < 0 && 'neg'] }, money(bal.balance, a.currency)),
         a.currency !== store.base() ? h('div', { class: 'muted small mono' }, `≈ ${money(bal.inBase, store.base())}`) : null),
-      h('div', { class: 'dock-actions two' },
-        h('button', { class: 'act act-swap', onclick: () => openTransferSheet({ fromId: a.id }) }, h('span', { class: 'act-sign' }, '⇄'), 'Перевести'),
-        h('button', { class: 'act', onclick: () => txnListSheet(a.name, store.state().txns.filter((t) => t.accountId === a.id || t.toAccountId === a.id)) }, h('span', { class: 'act-sign' }, '≡'), 'Операции')),
       h('div', { class: 'card pad editor' },
-        h('div', { class: 'micro' }, 'Фактический остаток'),
+        h('div', { class: 'micro' }, 'Сверить: сколько сейчас на самом деле'),
         h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: String(bal.balance).replace('.', ','), oninput: (e) => { actual = e.target.value; } }), h('span', { class: 'cur-btn' }, a.currency)),
         h('button', { class: 'btn btn-primary', onclick: async () => {
           const v = parseAmount(actual);
           if (Number.isNaN(v) || actual === '') return toast('Введите остаток');
           await store.setAccountBalance(a, v);
-          toast('Остаток обновлён');
-        } }, 'Сверить остаток'),
-        h('p', { class: 'muted small' }, 'Разница запишется корректировкой и не попадёт в доходы и расходы.')),
+          toast('Остаток сверен');
+        } }, 'Сохранить остаток')),
+      store.activeAccounts().length > 1 && h('button', { class: 'btn btn-plain', onclick: () => openTransferSheet({ fromId: a.id }) }, '⇄ Перевести на другой счёт'),
+      hist.length ? h('div', { class: 'micro list-label' }, 'История остатка') : null,
+      hist.length ? h('div', { class: 'card list' }, hist.map((x) => h('div', { class: 'row' },
+        h('span', { class: 'row-main' }, h('span', { class: 'row-title mono' }, money(x.balance, a.currency)), h('span', { class: 'row-sub' }, [shortDate(x.date), x.note].filter(Boolean).join(' · ')))))) : null,
       h('button', { class: 'btn btn-plain', onclick: () => openAccountEditor({ item: a }) }, 'Изменить счёт'));
   };
   render();
@@ -89,21 +93,41 @@ export function accountSheet(acc) {
   openSheet({ title: acc.name, content: body, onClose: unsub });
 }
 
-export function openTransferSheet({ fromId = '', txn = null } = {}) {
+/** Подвести баланс: ввести фактические остатки всех счетов сразу. */
+export function openReconcileSheet() {
+  const accs = store.activeAccounts();
+  if (!accs.length) return openAccountEditor({});
+  const vals = Object.fromEntries(accs.map((a) => [a.id, String(a.balance || 0).replace('.', ',')]));
+  const sh = openSheet({
+    title: 'Подвести баланс',
+    right: h('button', { class: 'link strong', onclick: save }, 'Готово'),
+    content: h('div', { class: 'editor' },
+      h('p', { class: 'muted small' }, 'Впишите, сколько сейчас на каждом счету. Капитал пересчитается, а в истории появится точка — так видно, как он меняется.'),
+      h('div', { class: 'card list' }, accs.map((a) => h('label', { class: 'row budget-row' },
+        h('span', { class: 'cat-ico swap' }, a.icon || '▫'),
+        h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, a.name), h('span', { class: 'row-sub' }, a.checkedAt ? `сверено ${ago(a.checkedAt)}` : 'ещё не сверялся')),
+        h('input', { class: 'budget-input mono', inputmode: 'decimal', value: vals[a.id], 'aria-label': `Остаток: ${a.name}`, oninput: (e) => { vals[a.id] = e.target.value; } }),
+        h('span', { class: 'mono rec-cur' }, a.currency)))),
+      h('button', { class: 'btn btn-primary save-btn', onclick: save }, 'Сохранить баланс')),
+  });
+  async function save() {
+    const map = {};
+    for (const a of accs) { const v = parseAmount(vals[a.id]); if (!Number.isNaN(v)) map[a.id] = v; }
+    await store.reconcile(map);
+    sh.close();
+    toast('Баланс подведён');
+  }
+}
+
+export function openTransferSheet({ fromId = '' } = {}) {
   const accs = store.activeAccounts();
   if (accs.length < 2) return toast('Для перевода нужно минимум два счёта');
-  const d = {
-    fromId: txn?.accountId || fromId || accs[0].id,
-    toId: txn?.toAccountId || accs.find((a) => a.id !== (fromId || accs[0].id))?.id,
-    amountStr: txn ? String(txn.amount).replace('.', ',') : '', toStr: txn ? String(txn.toAmount).replace('.', ',') : '',
-    note: txn?.note || '', date: txn?.date || dayKey(),
-  };
+  const d = { fromId: fromId || accs[0].id, toId: accs.find((a) => a.id !== (fromId || accs[0].id))?.id, amountStr: '', toStr: '' };
   const box = h('div', { class: 'editor' });
-  let toTouched = !!txn;
+  let toTouched = false;
   function render() {
     clear(box);
     const from = store.account(d.fromId), to = store.account(d.toId);
-    const bal = store.accountBalances();
     const pick = (key, other) => h('div', { class: 'kind-row' }, accs.map((a) => h('button', {
       type: 'button', class: ['chip', d[key] === a.id && 'active'], disabled: a.id === d[other],
       onclick: () => { d[key] = a.id; toTouched = false; render(); },
@@ -122,15 +146,12 @@ export function openTransferSheet({ fromId = '', txn = null } = {}) {
     box.append(
       label('Откуда'), pick('fromId', 'toId'),
       h('div', { class: 'swap-side' }, h('div', { class: 'swap-row' }, fromInput, h('span', { class: 'cur-btn' }, from?.currency || '')),
-        h('div', { class: 'swap-hint mono' }, from ? `на счету ${money(bal[from.id]?.balance || 0, from.currency)}` : '')),
+        h('div', { class: 'swap-hint mono' }, from ? `на счету ${money(from.balance || 0, from.currency)}` : '')),
       label('Куда'), pick('toId', 'fromId'),
       diffCur && h('div', { class: 'swap-side' }, h('div', { class: 'swap-row' }, toInput, h('span', { class: 'cur-btn' }, to.currency)),
         h('div', { class: 'swap-hint mono' }, 'сумма зачисления — по курсу, можно поправить')),
-      label('Описание'),
-      h('input', { class: 'field', placeholder: 'Например, «снял в банкомате»', value: d.note, oninput: (e) => { d.note = e.target.value; } }),
-      label('Дата'), dateRow(d),
-      h('button', { class: 'btn btn-primary save-btn', onclick: save }, txn ? 'Сохранить' : 'Перевести'),
-      txn && h('button', { class: 'btn btn-plain danger', onclick: async () => { if (await confirmSheet('Удалить перевод?')) { await store.deleteTxn(txn.id); sh.close(); } } }, 'Удалить перевод'));
+      h('p', { class: 'muted small' }, 'Перевод меняет только остатки счетов в портфеле. В дневник трат он не попадает.'),
+      h('button', { class: 'btn btn-primary save-btn', onclick: save }, 'Перевести'));
   }
   async function save() {
     const a = parseAmount(d.amountStr);
@@ -139,13 +160,20 @@ export function openTransferSheet({ fromId = '', txn = null } = {}) {
     const from = store.account(d.fromId), to = store.account(d.toId);
     const b = from.currency === to.currency ? a : parseAmount(d.toStr);
     if (!(b > 0)) return toast('Введите сумму зачисления');
-    await store.saveTransfer({ id: txn?.id, fromId: d.fromId, toId: d.toId, amount: a, toAmount: b, date: d.date, note: d.note });
+    await store.transferBetween({ fromId: d.fromId, toId: d.toId, amount: a, toAmount: b });
     haptic();
     sh.close();
-    toast(txn ? 'Сохранено' : 'Перевод записан');
+    toast('Перевод выполнен');
   }
   const sh = openSheet({ title: 'Перевод между счетами', right: h('button', { class: 'link strong', onclick: save }, 'Готово'), content: box });
   render();
+}
+
+function ago(ts) {
+  const days = Math.floor((Date.now() - ts) / 864e5);
+  if (days <= 0) return 'сегодня';
+  if (days === 1) return 'вчера';
+  return `${days} дн. назад`;
 }
 
 // ---------- шаблон ----------
@@ -153,7 +181,7 @@ export function openTemplateEditor({ item = null } = {}) {
   const st = store.settings();
   const d = {
     name: item?.name || '', type: item?.type || 'expense', amountStr: item ? String(item.amount).replace('.', ',') : '',
-    currency: item?.currency || st.base, categoryId: item?.categoryId || null, accountId: item?.accountId || '',
+    currency: item?.currency || st.base, categoryId: item?.categoryId || null,
   };
   const cats = h('div', { class: 'cat-grid' });
   const renderCats = () => {
@@ -162,20 +190,12 @@ export function openTemplateEditor({ item = null } = {}) {
       onclick: () => { d.categoryId = c.id; renderCats(); } }, h('span', { class: 'cat-ico' }, c.icon), h('span', { class: 'cat-name' }, c.name))));
   };
   const curBtn = h('button', { type: 'button', class: 'cur-btn', onclick: () => pickCurrency({ current: d.currency, onPick: (c) => { d.currency = c; curBtn.textContent = isCrypto(c) ? c : currencySymbol(c); } }) }, isCrypto(d.currency) ? d.currency : currencySymbol(d.currency));
-  const accWrap = h('div');
-  const renderAcc = () => {
-    clear(accWrap);
-    const accs = store.activeAccounts();
-    if (!accs.length) return;
-    accWrap.append(label('Счёт'), h('div', { class: 'kind-row' }, [...accs.map((a) => h('button', { type: 'button', class: ['chip', d.accountId === a.id && 'active'], onclick: () => { d.accountId = a.id; renderAcc(); } }, `${a.icon || '▫'} ${a.name}`)),
-      h('button', { type: 'button', class: ['chip', !d.accountId && 'active'], onclick: () => { d.accountId = ''; renderAcc(); } }, 'Без счёта')]));
-  };
   async function save() {
     const amount = parseAmount(d.amountStr);
     if (!(amount > 0)) return toast('Введите сумму');
     if (!d.categoryId) return toast('Выберите ярлык');
     const c = store.category(d.categoryId);
-    store.upsert('templates', { ...(item || {}), name: d.name.trim() || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, accountId: d.accountId, note: d.name.trim() });
+    store.upsert('templates', { ...(item || {}), name: d.name.trim() || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, note: d.name.trim() });
     sh.close();
     toast(item ? 'Шаблон сохранён' : 'Шаблон добавлен');
   }
@@ -188,12 +208,10 @@ export function openTemplateEditor({ item = null } = {}) {
       h('input', { class: 'field', placeholder: 'Например, «Кофе» или «Обед»', maxlength: '30', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
       h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.amountStr, oninput: (e) => { d.amountStr = e.target.value; } }), curBtn),
       label('Ярлык'), cats,
-      accWrap,
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить шаблон'),
       item && h('button', { class: 'btn btn-plain danger', onclick: async () => { await store.removeItem('templates', item.id); sh.close(); toast('Шаблон удалён'); } }, 'Удалить шаблон')),
   });
   renderCats();
-  renderAcc();
 }
 
 /** Применить шаблон с возможностью отмены. */
@@ -244,7 +262,7 @@ export function openSmartInput({ listen = false } = {}) {
     if (!x.amount || !x.categoryId) { edit(); return; }
     const rate = store.rate(x.currency);
     if (x.currency !== store.base() && !(rate > 0)) { edit(); return; }
-    await store.saveTxn({ type: x.type, amount: x.amount, currency: x.currency, rate, categoryId: x.categoryId, note: x.note, date: dayKey(), accountId: defaultAccount() });
+    await store.saveTxn({ type: x.type, amount: x.amount, currency: x.currency, rate, categoryId: x.categoryId, note: x.note, date: dayKey() });
     haptic();
     sh.close();
     toast(x.type === 'income' ? 'Доход добавлен' : 'Трата добавлена');

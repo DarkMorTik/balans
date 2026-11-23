@@ -85,7 +85,7 @@ export function openInvestEditor({ item = null } = {}) {
       h('input', { class: 'field', placeholder: 'Условия, досрочный вывод, ссылка', maxlength: '200', value: d.note, oninput: (e) => { d.note = e.target.value; } }),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить вложение'),
       item && h('button', { class: 'btn btn-plain danger', onclick: async () => {
-        if (await confirmSheet(`Удалить «${item.name}»?`, { detail: 'Уже записанные доходы останутся в операциях.' })) { await store.removeItem('invest', item.id); sh.close(); }
+        if (await confirmSheet(`Удалить «${item.name}»?`, { detail: 'Уже записанные доходы останутся в операциях.' })) { await store.removeInvestment(item); sh.close(); }
       } }, 'Удалить')),
   });
   renderKinds(); renderTerm(); renderPreview();
@@ -135,7 +135,7 @@ function closeSheet(v) {
     content: h('div', { class: 'editor' },
       h('div', { class: 'section-label micro' }, `Фактический доход, ${v.currency}`),
       h('input', { class: 'field mono', inputmode: 'decimal', value: d.profitStr, oninput: (e) => { d.profitStr = e.target.value; } }),
-      h('p', { class: 'muted small' }, 'Запишется доходом с ярлыком «Доход от вложений» — попадёт в аналитику.'),
+      h('p', { class: 'muted small' }, 'Доход запишется в дневник (ярлык «Доход от вложений»), а тело и доход — на выбранный счёт в портфеле.'),
       accountPicker(d, 'toAccountId', 'Зачислить на счёт'),
       h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, `Вернуть тело ${money(v.amount, v.currency)} на счёт`), h('span', { class: 'row-sub' }, 'Только если выбран счёт')),
         h('input', { type: 'checkbox', class: 'switch', checked: true, onchange: (e) => { d.returnPrincipal = e.target.checked; } })),

@@ -4,7 +4,7 @@ import * as store from '../store.js';
 import { parseCSV, detectColumns, rowsToDrafts } from '../csv.js';
 import { guessCategory } from '../nlp.js';
 import { openSheet, toast } from '../sheet.js';
-import { pickCurrency, accountPicker, defaultAccount, segmented } from './editor.js';
+import { pickCurrency, segmented } from './editor.js';
 
 export function startCsvImport() {
   const input = h('input', { type: 'file', accept: '.csv,text/csv,text/plain,.txt' });
@@ -26,7 +26,7 @@ export function startCsvImport() {
 function openImportSheet(rows, fileName) {
   const st = store.state();
   const cols = detectColumns(rows);
-  const opt = { order: 'dmy', currency: st.settings.base, accountId: defaultAccount() };
+  const opt = { order: 'dmy', currency: st.settings.base };
   let drafts = [];
   const box = h('div', { class: 'editor' });
   const width = Math.max(...rows.slice(0, 20).map((r) => r.length));
@@ -67,7 +67,6 @@ function openImportSheet(rows, fileName) {
       h('div', { class: 'kind-row' },
         segmented([['dmy', 'ДД.ММ.ГГГГ'], ['mdy', 'ММ/ДД/ГГГГ']], opt.order, (v) => { opt.order = v; build(); render(); }),
         curBtn),
-      accountPicker(opt, 'accountId', 'Записать на счёт'),
       h('div', { class: 'import-summary' },
         h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'выбрано'), h('span', { class: 'mono' }, `${on.length} из ${drafts.length}`)),
         h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'расходы'), h('span', { class: 'mono' }, money(sumExp, st.settings.base))),
@@ -107,7 +106,7 @@ function openImportSheet(rows, fileName) {
   async function doImport() {
     const list = drafts.filter((d) => d.on).map((d) => ({
       type: d.type, amount: d.amount, currency: d.currency, rate: store.rate(d.currency),
-      categoryId: d.categoryId, note: d.note, date: d.date, accountId: opt.accountId,
+      categoryId: d.categoryId, note: d.note, date: d.date,
     }));
     const missing = list.filter((d) => d.currency !== st.settings.base && !(d.rate > 0));
     if (missing.length) return toast(`Нет курса для ${missing[0].currency} — включите онлайн-курсы`);

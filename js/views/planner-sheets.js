@@ -3,7 +3,7 @@ import { h, clear, parseAmount, dayKey, addDays, money, dayTitle, shortDate, isC
 import * as store from '../store.js';
 import * as P from '../planner.js';
 import { openSheet, confirmSheet, toast } from '../sheet.js';
-import { segmented, pickCurrency, accountPicker, defaultAccount } from './editor.js';
+import { segmented, pickCurrency } from './editor.js';
 
 const label = (t) => h('div', { class: 'section-label micro' }, t);
 
@@ -40,7 +40,7 @@ function deleteButton(text, question, fn) {
 export function openRecurringEditor({ item = null, date = null, type = 'expense' } = {}) {
   const base = store.base();
   const d = {
-    type: item?.type || type, accountId: item ? item.accountId || '' : defaultAccount(),
+    type: item?.type || type,
     name: item?.name || '', amountStr: item ? String(item.amount).replace('.', ',') : '', currency: item?.currency || base,
     categoryId: item?.categoryId || store.categoryByName((item?.type || type) === 'income' ? 'Зарплата' : 'Подписки')?.id, freq: item?.freq || 'monthly',
     day: item?.day || Number((date || dayKey()).slice(8)), weekday: item?.weekday ?? 0, month: item?.month || Number((date || dayKey()).slice(5, 7)),
@@ -73,7 +73,7 @@ export function openRecurringEditor({ item = null, date = null, type = 'expense'
     const amount = parseAmount(d.amountStr);
     if (!d.name.trim()) return toast('Введите название');
     if (!(amount > 0)) return toast('Введите сумму');
-    store.upsert('recurring', { ...(item || {}), type: d.type, accountId: d.accountId, name: d.name.trim(), amount, currency: d.currency, categoryId: d.categoryId, icon: d.icon,
+    store.upsert('recurring', { ...(item || {}), type: d.type, name: d.name.trim(), amount, currency: d.currency, categoryId: d.categoryId, icon: d.icon,
       freq: d.freq, day: d.day, weekday: d.weekday, month: d.month, start: d.start, active: d.active, paid: item?.paid || {} });
     sh.close();
     toast(item ? 'Сохранено' : d.type === 'income' ? 'Доход добавлен в календарь' : 'Платёж добавлен');
@@ -91,7 +91,6 @@ export function openRecurringEditor({ item = null, date = null, type = 'expense'
       label('Название'),
       h('input', { class: 'field', placeholder: 'Например, «Аренда», «Claude Pro» или «Зарплата»', maxlength: '60', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
       amountRow(d),
-      accountPicker(d),
       label('Как часто'),
       segmented([['monthly', 'Ежемесячно'], ['weekly', 'Еженедельно'], ['yearly', 'Ежегодно']], d.freq, (v) => { d.freq = v; renderWhen(); }),
       when,
@@ -114,7 +113,7 @@ export function openDebtEditor({ item = null } = {}) {
   const d = {
     kind: item?.kind || 'loan', name: item?.name || '', amountStr: item ? String(item.principal).replace('.', ',') : '', currency: item?.currency || base,
     remainingStr: item ? '' : '', paymentStr: item?.payment ? String(item.payment).replace('.', ',') : '', day: item?.day || 0,
-    rate: item?.rate || '', start: item?.start || dayKey(), note: item?.note || '', accountId: item ? item.accountId || '' : defaultAccount(),
+    rate: item?.rate || '', start: item?.start || dayKey(), note: item?.note || '',
   };
   const kinds = h('div', { class: 'kind-row' });
   function renderKinds() {
@@ -134,7 +133,7 @@ export function openDebtEditor({ item = null } = {}) {
     const remaining = parseAmount(d.remainingStr);
     const out = {
       ...(item || {}), kind: d.kind, name: d.name.trim(), principal, currency: d.currency,
-      payment: parseAmount(d.paymentStr) || 0, day: d.day, rate: parseAmount(String(d.rate)) || 0, start: d.start, note: d.note.trim(), accountId: d.accountId,
+      payment: parseAmount(d.paymentStr) || 0, day: d.day, rate: parseAmount(String(d.rate)) || 0, start: d.start, note: d.note.trim(),
       payments: item?.payments || [],
     };
     out.initialPaid = !item && remaining >= 0 && remaining < principal ? principal - remaining : item?.initialPaid || 0;
@@ -159,7 +158,6 @@ export function openDebtEditor({ item = null } = {}) {
       dayWrap,
       label('Ставка, % годовых (для справки)'),
       h('input', { class: 'field mono', inputmode: 'decimal', placeholder: '0', value: d.rate ? String(d.rate) : '', oninput: (e) => { d.rate = e.target.value; } }),
-      accountPicker(d, 'accountId', 'Счёт для платежей'),
       label('Комментарий'),
       h('input', { class: 'field', placeholder: 'Банк, договор, условия', maxlength: '200', value: d.note, oninput: (e) => { d.note = e.target.value; } }),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить'),

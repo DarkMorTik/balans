@@ -163,7 +163,6 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     categoryId: txn?.categoryId || pf.categoryId || null,
     note: txn?.note || pf.note || '',
     date: txn?.date || date || dayKey(),
-    accountId: txn ? txn.accountId || '' : defaultAccount(),
     saveTpl: false,
   };
 
@@ -236,10 +235,10 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     if (!(amount > 0)) { toast('Введите сумму'); amountInput.focus(); return; }
     if (!d.categoryId) { toast('Выберите ярлык'); return; }
     if (d.currency !== st.base && !(d.rate > 0)) { toast('Нет курса — введите его вручную'); return; }
-    await store.saveTxn({ ...(txn || {}), type: d.type, amount, currency: d.currency, rate: d.rate, categoryId: d.categoryId, note: d.note, date: d.date, accountId: d.accountId });
+    await store.saveTxn({ ...(txn || {}), type: d.type, amount, currency: d.currency, rate: d.rate, categoryId: d.categoryId, note: d.note, date: d.date });
     if (d.saveTpl) {
       const c = store.category(d.categoryId);
-      store.upsert('templates', { name: d.note || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, accountId: d.accountId, note: d.note });
+      store.upsert('templates', { name: d.note || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, note: d.note });
     }
     haptic();
     sheet.close();
@@ -252,7 +251,6 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     h('div', { class: 'amount-wrap' }, amountInput, curBtn),
     preview,
     rf.el,
-    accountPicker(d),
     h('div', { class: 'section-label micro' }, 'Ярлык'),
     cats,
     h('div', { class: 'section-label micro' }, 'Описание'),
@@ -272,6 +270,9 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
 
   const sheet = openSheet({
     title: txn ? 'Операция' : '',
+    left: txn ? h('button', { class: 'link danger-link', onclick: async () => {
+      if (await confirmSheet('Удалить операцию?', { detail: `${store.category(txn.categoryId).name} · ${money(txn.amount, txn.currency)}` })) { await store.deleteTxn(txn.id); sheet.close(); toast('Удалено'); onDone?.(); }
+    } }, 'Удалить') : null,
     className: ['sheet-editor', d.type === 'income' && 'is-income'].filter(Boolean).join(' '),
     right: h('button', { class: 'link strong', onclick: save }, 'Готово'),
     content,
@@ -326,9 +327,8 @@ export function openExchangeEditor({ txn = null } = {}) {
   function updateInfo() {
     clear(info);
     const a = parseAmount(d.fromStr), b = parseAmount(d.toStr);
-    const own = store.holdings();
-    fromHint.textContent = `доступно ${money(own[d.from]?.qty || 0, d.from)}`;
-    toHint.textContent = `есть ${money(own[d.to]?.qty || 0, d.to)}`;
+    fromHint.textContent = '';
+    toHint.textContent = '';
     const market = store.pairRate(d.to, d.from);
     if (a > 0 && b > 0) {
       const deal = a / b;
@@ -389,7 +389,10 @@ export function openExchangeEditor({ txn = null } = {}) {
     } }, 'Удалить обмен'));
 
   const sheet = openSheet({
-    title: txn ? 'Обмен' : 'Обмен',
+    title: 'Обмен',
+    left: txn ? h('button', { class: 'link danger-link', onclick: async () => {
+      if (await confirmSheet('Удалить обмен?')) { await store.deleteTxn(txn.id); sheet.close(); toast('Удалено'); }
+    } }, 'Удалить') : null,
     className: 'sheet-editor',
     right: h('button', { class: 'link strong', onclick: save }, 'Готово'),
     content,

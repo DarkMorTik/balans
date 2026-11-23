@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэш оболочки приложения. Никаких внешних запросов.
-const VERSION = 'balans-v8';
+const VERSION = 'balans-v9';
 const SHELL = [
   './',
   'index.html',

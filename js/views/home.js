@@ -6,15 +6,14 @@ import { openSheet, confirmSheet, toast } from '../sheet.js';
 import { guilloche } from '../guilloche.js';
 import * as P from '../planner.js';
 import { eventRow, taskRow } from './calendar.js';
-import { useTemplate, openTemplateEditor, openSmartInput, openTransferSheet } from './money-sheets.js';
+import { useTemplate, openTemplateEditor, openSmartInput } from './money-sheets.js';
 
 /** Сколько денег есть сейчас: сумма счетов или (если счетов нет) фиатные остатки по операциям. */
 export function availableNow() {
-  const accs = store.activeAccounts();
+  const accs = store.liquidAccounts();
+  if (!accs.length) return null;
   const b = store.accountBalances();
-  const inAccounts = accs.filter((x) => !isCrypto(x.currency)).reduce((a, x) => a + (b[x.id]?.inBase || 0), 0);
-  const outside = Object.entries(store.holdings(accs.length ? store.unassignedFilter() : null)).filter(([c]) => !isCrypto(c)).reduce((a, [, e]) => a + e.value, 0);
-  return inAccounts + outside;
+  return accs.reduce((a, x) => a + (b[x.id]?.inBase || 0), 0);
 }
 
 const nav = (to) => window.dispatchEvent(new CustomEvent('nav', { detail: to }));
@@ -23,7 +22,8 @@ function todayTicket(st, today) {
   const events = P.plannedEvents(st, addDays(today, -31), addDays(today, 8), today).filter((e) => !e.paid && e.type !== 'income' && (e.overdue || e.date >= today));
   const tasks = P.tasksFor(st, today);
   const over = P.overdueTasks(st, today);
-  const pay = P.paydayForecast(st, availableNow(), store.rate, today);
+  const cash = availableNow();
+  const pay = cash == null ? null : P.paydayForecast(st, cash, store.rate, today);
   const maturing = P.investEvents(st, addDays(today, -60), addDays(today, 8), today);
   if (!events.length && !tasks.length && !over.length && !pay && !maturing.length) return null;
   const done = tasks.filter((t) => P.isDone(t, today)).length;
@@ -77,16 +77,6 @@ function openAdjust(t) {
 
 export function txnRow(t, { showDate = false } = {}) {
   const base = store.base();
-  if (t.type === 'exchange' && t.accountId && t.toAccountId) {
-    const from = store.account(t.accountId), to = store.account(t.toAccountId);
-    return h('button', { class: 'row txn', onclick: () => openTransferSheet({ txn: t }) },
-      h('span', { class: 'cat-ico swap' }, '↔'),
-      h('span', { class: 'row-main' },
-        h('span', { class: 'row-title' }, `${from?.name || '?'} → ${to?.name || '?'}`),
-        h('span', { class: 'row-sub' }, ['Перевод', t.note && !t.note.includes('→') ? t.note : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
-      h('span', { class: 'row-end' }, h('span', { class: 'amount' }, money(t.amount, t.currency)),
-        t.currency !== t.toCurrency ? h('span', { class: 'row-sub mono' }, `→ ${money(t.toAmount, t.toCurrency)}`) : null));
-  }
   if (t.type === 'exchange') {
     return h('button', { class: 'row txn', onclick: () => openExchangeEditor({ txn: t }) },
       h('span', { class: 'cat-ico swap' }, '⇄'),
@@ -112,7 +102,7 @@ export function txnRow(t, { showDate = false } = {}) {
     h('span', { class: 'cat-ico', style: { '--c': c.color } }, c.icon),
     h('span', { class: 'row-main' },
       h('span', { class: 'row-title' }, t.note || c.name),
-      h('span', { class: 'row-sub' }, [t.note ? c.name : null, t.accountId ? store.account(t.accountId)?.name : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-sub' }, [t.note ? c.name : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
     h('span', { class: 'row-end' },
       h('span', { class: ['amount', t.type === 'income' && 'inc'] }, money(sign * t.amount, t.currency, { sign: t.type === 'income' })),
       foreign && h('span', { class: 'row-sub mono' }, money(sign * store.inBase(t), base))));

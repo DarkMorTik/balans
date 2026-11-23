@@ -2,6 +2,7 @@
 import * as vault from './vault.js';
 import { uid, round2, round8, roundAmt, dayKey, isCrypto, CRYPTO, registerCryptos } from './util.js';
 import { fetchMarket, setExtraNames } from './market.js';
+import * as P from './planner.js';
 
 const BASE_CRYPTO = Object.keys(CRYPTO);
 setExtraNames(Object.fromEntries(Object.entries(CRYPTO).map(([k, v]) => [k, { name: v.name, id: v.cg }])));
@@ -64,7 +65,8 @@ export function initialState(base = 'RUB') {
     focus: {},     // минуты фокуса по дням
     deleted: {},   // журнал удалений (для синхронизации между устройствами)
     invest: [],    // инвестиции, вклады, стейкинг
-    schema: 5,
+    capitalHistory: [], // снимки капитала при сверках
+    schema: 6,
   };
 }
 
@@ -80,7 +82,7 @@ function addCategories(st, names) {
 export function migrate() {
   const st = state();
   const v = st.schema || 1;
-  if (v >= 5) return;
+  if (v >= 6) return;
   if (v < 2) {
     addCategories(st, EXTRA_V2);
     st.settings.livePrices = true;
@@ -93,7 +95,8 @@ export function migrate() {
   st.deleted ||= {};
   st.settings.theme ||= 'auto';
   addCategories(st, EXTRA_V5);
-  st.schema = 5;
+  if (v < 6) migrateToV6(st);
+  st.schema = 6;
   return vault.save();
 }
 
@@ -480,7 +483,7 @@ export function payRecurring(r, date) {
   const income = rr.type === 'income';
   const t = buildTxn({
     type: income ? 'income' : 'expense', amount: rr.amount, currency: rr.currency, rate: rate(rr.currency),
-    categoryId: rr.categoryId || categoryByName(income ? 'Зарплата' : 'Подписки')?.id, note: rr.name, date, accountId: rr.accountId,
+    categoryId: rr.categoryId || categoryByName(income ? 'Зарплата' : 'Подписки')?.id, note: rr.name, date,
   });
   st.txns.push(t);
   rr.paid = { ...(rr.paid || {}), [date]: t.id };
@@ -510,13 +513,14 @@ export function payDebt(d, amount, date = dayKey(), record = true) {
     const t = buildTxn({
       type: dd.kind === 'lent' ? 'income' : 'expense', amount, currency: dd.currency, rate: rate(dd.currency),
       categoryId: dd.kind === 'lent' ? categoryByName('Другое')?.id : categoryByName('Кредиты')?.id || categoryByName('Другое')?.id,
-      note: `${dd.kind === 'lent' ? 'Возврат долга' : 'Платёж'}: ${dd.name}`, date, accountId: dd.accountId,
+      note: `${dd.kind === 'lent' ? 'Возврат долга' : 'Платёж'}: ${dd.name}`, date,
     });
     st.txns.push(t);
     txnId = t.id;
   }
   dd.payments = [...(dd.payments || []), { id: uid(), date, amount: roundAmt(amount, dd.currency), txnId }];
   touch(dd);
+  snapshotCapital();
   return changed();
 }
 export function removeDebtPayment(d, pid) {
@@ -553,7 +557,9 @@ export function contributeGoal(g, amount, date = dayKey()) {
   return changed();
 }
 
-// ---------- счета и кошельки ----------
+// ---------- счета и кошельки (капитал) ----------
+// Капитал ведётся отдельно от дневника трат: у счёта свой остаток, который вы сверяете сами.
+// Ежедневные траты и доходы на него не влияют.
 export const ACCOUNT_KINDS = {
   card: { label: 'Карта', icon: '💳' },
   cash: { label: 'Наличные', icon: '💵' },
@@ -562,64 +568,95 @@ export const ACCOUNT_KINDS = {
   exchange: { label: 'Биржа / кошелёк', icon: '◈' },
   other: { label: 'Другое', icon: '▫' },
 };
+const LIQUID = new Set(['card', 'cash', 'bank']);
 
-/** Балансы счетов в их валютах. { id: { balance, inBase } } */
+/** { id: { balance, inBase } } */
 export function accountBalances() {
-  const st = state();
   const out = {};
-  const accs = st.accounts || [];
-  for (const a of accs) out[a.id] = { balance: a.initial || 0 };
-  const add = (id, cur, v) => {
-    const e = out[id];
-    if (!e) return;
-    const acc = accs.find((x) => x.id === id);
-    // сумма в другой валюте пересчитывается в валюту счёта по текущему курсу
-    e.balance += cur === acc.currency ? v : v * pairRate(cur, acc.currency);
-  };
-  for (const t of st.txns) {
-    if (t.type === 'income' || t.type === 'adjust') add(t.accountId, t.currency, t.amount);
-    else if (t.type === 'expense') add(t.accountId, t.currency, -t.amount);
-    else if (t.type === 'exchange') {
-      add(t.accountId, t.currency, -t.amount);
-      add(t.toAccountId, t.toCurrency, t.toAmount);
-    }
-  }
-  for (const a of accs) {
-    const e = out[a.id];
-    e.balance = roundAmt(e.balance, a.currency);
-    e.inBase = round2(e.balance * rate(a.currency));
+  for (const a of state().accounts || []) {
+    const balance = roundAmt(a.balance || 0, a.currency);
+    out[a.id] = { balance, inBase: round2(balance * rate(a.currency)) };
   }
   return out;
 }
 
 export const activeAccounts = () => (state().accounts || []).filter((a) => !a.archived);
 export const account = (id) => (state().accounts || []).find((a) => a.id === id);
+/** Деньги «на руках» для прогноза до зарплаты: карты, наличные, банковские счета (не крипта). */
+export const liquidAccounts = () => activeAccounts().filter((a) => LIQUID.has(a.kind) && !isCrypto(a.currency));
 
-/** Перевод между счетами (в т.ч. с конвертацией валют). */
-export function saveTransfer({ id, fromId, toId, amount, toAmount, date, note }) {
-  const from = account(fromId), to = account(toId);
-  if (!from || !to) return Promise.reject(new Error('Выберите счета'));
-  return saveExchange({
-    id, amount, currency: from.currency, rate: rate(from.currency), accountId: from.id,
-    toAmount: from.currency === to.currency ? amount : toAmount, toCurrency: to.currency, toRate: rate(to.currency), toAccountId: to.id,
-    note: note || `${from.name} → ${to.name}`, date, categoryId: '',
-  });
+function logBalance(a, note) {
+  a.history = [...(a.history || []), { date: dayKey(), balance: a.balance, note: note || '' }].slice(-60);
+  a.updatedAt = Date.now();
+  a.checkedAt = Date.now();
 }
 
-/** Привести баланс счёта к фактическому (корректировка, не доход и не расход). */
+/** Изменить остаток счёта на delta (в валюте cur, пересчёт по курсу). */
+function shiftBalance(accId, delta, cur, note) {
+  const a = account(accId);
+  if (!a || !delta) return;
+  const v = cur && cur !== a.currency ? delta * pairRate(cur, a.currency) : delta;
+  a.balance = roundAmt((a.balance || 0) + v, a.currency);
+  logBalance(a, note);
+}
+
+/** Сверка: записать фактический остаток. */
 export function setAccountBalance(acc, actual) {
-  const cur = accountBalances()[acc.id]?.balance || 0;
-  const diff = roundAmt(actual - cur, acc.currency);
-  if (!diff) return Promise.resolve();
-  state().txns.push(buildTxn({ type: 'adjust', amount: diff, currency: acc.currency, rate: rate(acc.currency), accountId: acc.id, note: `Остаток: ${acc.name}` }));
+  const a = account(acc.id);
+  if (!a) return Promise.resolve();
+  a.balance = roundAmt(actual, a.currency);
+  logBalance(a, 'сверка');
+  snapshotCapital();
   return changed();
+}
+
+/** Подвести баланс сразу по нескольким счетам: { id: остаток }. */
+export function reconcile(map) {
+  for (const [id, v] of Object.entries(map)) {
+    const a = account(id);
+    if (!a || !Number.isFinite(v)) continue;
+    if (roundAmt(v, a.currency) !== roundAmt(a.balance || 0, a.currency)) { a.balance = roundAmt(v, a.currency); logBalance(a, 'сверка'); }
+    else a.checkedAt = Date.now();
+  }
+  snapshotCapital();
+  return changed();
+}
+
+/** Перевод между счетами (с конвертацией). Это движение капитала, в дневник трат не попадает. */
+export function transferBetween({ fromId, toId, amount, toAmount }) {
+  const from = account(fromId), to = account(toId);
+  if (!from || !to || !(amount > 0)) return Promise.reject(new Error('Выберите счета и сумму'));
+  shiftBalance(from.id, -amount, from.currency, `перевод → ${to.name}`);
+  shiftBalance(to.id, from.currency === to.currency ? amount : toAmount, to.currency, `перевод ← ${from.name}`);
+  return changed();
+}
+
+// ---------- капитал ----------
+/** Чистый капитал: счета + вложения (с накопленным доходом) + «мне должны» − долги. */
+export function capitalNow(today = dayKey()) {
+  const st = state();
+  const accounts = activeAccounts().reduce((a, x) => a + (x.balance || 0) * rate(x.currency), 0);
+  const invest = (st.invest || []).filter((v) => !v.closed).reduce((a, v) => a + (v.amount + P.investStats(v, today).accrued) * rate(v.currency), 0);
+  const lent = (st.debts || []).filter((d) => d.kind === 'lent').reduce((a, d) => a + P.debtRemaining(d) * rate(d.currency), 0);
+  const owe = (st.debts || []).filter((d) => d.kind !== 'lent').reduce((a, d) => a + P.debtRemaining(d) * rate(d.currency), 0);
+  return { accounts: round2(accounts), invest: round2(invest), lent: round2(lent), owe: round2(owe), net: round2(accounts + invest + lent - owe) };
+}
+
+/** Снимок капитала на сегодня (для графика истории). */
+export function snapshotCapital() {
+  const st = state();
+  const c = capitalNow();
+  const day = dayKey();
+  st.capitalHistory = (st.capitalHistory || []).filter((x) => x.date !== day);
+  st.capitalHistory.push({ date: day, net: c.net, accounts: c.accounts, invest: c.invest, owe: c.owe });
+  st.capitalHistory = st.capitalHistory.slice(-120);
 }
 
 // ---------- шаблоны ----------
 export function applyTemplate(tpl, date = dayKey()) {
   const t = buildTxn({
     type: tpl.type, amount: tpl.amount, currency: tpl.currency, rate: rate(tpl.currency),
-    categoryId: tpl.categoryId, note: tpl.note || tpl.name, date, accountId: tpl.accountId, templateId: tpl.id,
+    categoryId: tpl.categoryId, note: tpl.note || tpl.name, date, templateId: tpl.id,
   });
   state().txns.push(t);
   return changed().then(() => t);
@@ -658,35 +695,33 @@ export function unassignedFilter() {
 }
 
 // ---------- инвестиции и стейкинг ----------
-/** Создать вложение; при указании счёта сумма списывается с него (корректировкой, не тратой). */
+/** Создать вложение; при указании счёта сумма переносится с его остатка. */
 export function addInvestment(data, fromAccountId = '') {
-  const st = state();
   const inv = upsert('invest', { ...data, fromAccountId: fromAccountId || '', closed: false });
   if (fromAccountId && !data.id) {
-    st.txns.push(buildTxn({ type: 'adjust', amount: -inv.amount, currency: inv.currency, rate: rate(inv.currency), accountId: fromAccountId, note: `В вложение: ${inv.name}`, date: inv.start }));
+    shiftBalance(fromAccountId, -inv.amount, inv.currency, `в вложение: ${inv.name}`);
     changed();
   }
   return inv;
 }
 
 /**
- * Закрыть вложение: доход записывается как доход (ярлык «Доход от вложений»),
- * тело при желании возвращается на счёт.
+ * Закрыть вложение. Доход записывается в дневник как доход (откуда заработано),
+ * а на выбранный счёт зачисляются тело (по желанию) и доход.
  */
-export function closeInvestment(inv, { profit = 0, toAccountId = '', returnPrincipal = true, date = dayKey() } = {}) {
+export function closeInvestment(inv, { profit = 0, toAccountId = '', returnPrincipal = true, date = dayKey(), journal = true } = {}) {
   const st = state();
   const v = findItem('invest', inv.id);
   if (!v) return Promise.resolve();
   let profitTxn = null;
-  if (profit > 0) {
-    const t = buildTxn({ type: 'income', amount: profit, currency: v.currency, rate: rate(v.currency), categoryId: categoryByName('Доход от вложений')?.id || categoryByName('Другое')?.id, note: `Доход: ${v.name}`, date, accountId: toAccountId });
+  if (profit > 0 && journal) {
+    const t = buildTxn({ type: 'income', amount: profit, currency: v.currency, rate: rate(v.currency), categoryId: categoryByName('Доход от вложений')?.id || categoryByName('Другое')?.id, note: `Доход: ${v.name}`, date });
     st.txns.push(t);
     profitTxn = t.id;
   }
-  if (returnPrincipal && toAccountId) {
-    st.txns.push(buildTxn({ type: 'adjust', amount: v.amount, currency: v.currency, rate: rate(v.currency), accountId: toAccountId, note: `Возврат из вложения: ${v.name}`, date }));
-  }
+  if (toAccountId) shiftBalance(toAccountId, (returnPrincipal ? v.amount : 0) + profit, v.currency, `из вложения: ${v.name}`);
   Object.assign(v, { closed: true, closedAt: date, profit: roundAmt(profit, v.currency), profitTxn, updatedAt: Date.now() });
+  snapshotCapital();
   return changed();
 }
 
@@ -697,4 +732,42 @@ export function renewInvestment(inv, amount) {
   const d = new Date(start); d.setDate(d.getDate() + days);
   const end = d.toISOString().slice(0, 10);
   return upsert('invest', { name: inv.name, kind: inv.kind, amount: amount || inv.amount, currency: inv.currency, apr: inv.apr, compound: inv.compound, start, end, note: inv.note, closed: false });
+}
+
+// ---------- миграция к раздельному учёту (v6) ----------
+/**
+ * Раньше остатки счетов считались из операций дневника. Теперь у счёта свой остаток:
+ * переносим текущие значения, а из дневника убираем записи капитала (корректировки и переводы),
+ * которые после удаления счетов могли «висеть» и уводить капитал в минус.
+ */
+function migrateToV6(st) {
+  const accs = st.accounts || [];
+  const bal = {};
+  for (const a of accs) bal[a.id] = a.initial || 0;
+  const conv = (cur, a) => (cur === a.currency ? 1 : pairRate(cur, a.currency) || 0);
+  for (const t of st.txns) {
+    const add = (id, cur, v) => { const a = accs.find((x) => x.id === id); if (a) bal[id] += v * conv(cur, a); };
+    if (t.type === 'income' || t.type === 'adjust') add(t.accountId, t.currency, t.amount);
+    else if (t.type === 'expense') add(t.accountId, t.currency, -t.amount);
+    else if (t.type === 'exchange') { add(t.accountId, t.currency, -t.amount); add(t.toAccountId, t.toCurrency, t.toAmount); }
+  }
+  for (const a of accs) {
+    a.balance = roundAmt(bal[a.id] || 0, a.currency);
+    a.history = [{ date: dayKey(), balance: a.balance, note: 'перенесено' }];
+    delete a.initial;
+  }
+  const removed = st.txns.filter((t) => t.type === 'adjust' || (t.type === 'exchange' && t.accountId && t.toAccountId));
+  st.txns = st.txns.filter((t) => !removed.includes(t));
+  for (const t of st.txns) { delete t.accountId; delete t.toAccountId; }
+  for (const k of ['recurring', 'debts', 'templates']) for (const x of st[k] || []) delete x.accountId;
+  st.deleted ||= {};
+  for (const t of removed) st.deleted[t.id] = Date.now();
+  st.capitalHistory ||= [];
+}
+
+/** Удалить вложение; если оно активно и было списано со счёта — вернуть сумму обратно. */
+export function removeInvestment(inv) {
+  const v = findItem('invest', inv.id);
+  if (v && !v.closed && v.fromAccountId) shiftBalance(v.fromAccountId, v.amount, v.currency, `отмена вложения: ${v.name}`);
+  return removeItem('invest', inv.id);
 }
