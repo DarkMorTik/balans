@@ -103,7 +103,10 @@ h1, h2, h3, p { margin: 0; }
 /* плавающая капсула навигации */
 .tabbar {
   position: fixed; z-index: 50;
-  left: calc(14px + var(--safe-l)); right: calc(14px + var(--safe-r)); bottom: calc(10px + var(--safe-b));
+  left: calc(14px + var(--safe-l)); right: calc(14px + var(--safe-r));
+  /* привязка к видимой области (visualViewport), а не к layout viewport — iOS после закрытия
+     клавиатуры иногда оставляет layout viewport «сжатым», и bottom:0 уезжает к середине экрана */
+  top: calc(var(--vvtop) + var(--vvh) - var(--dock-h) - var(--safe-b) - 10px);
   height: var(--dock-h); max-width: 460px; margin: 0 auto;
   display: flex; align-items: center; padding: 0 6px;
   border-radius: 22px;
@@ -113,6 +116,8 @@ h1, h2, h3, p { margin: 0; }
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
 }
+body.modal-open .tabbar, body.kb .tabbar { opacity: 0; pointer-events: none; }
+.tabbar { transition: opacity 0.2s; }
 .tab {
   flex: 1; height: 50px; border-radius: 16px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
@@ -315,7 +320,7 @@ button.row:active { background: var(--fill); }
 .confirm-detail { color: var(--text2); text-align: center; font-size: 14.5px; margin-bottom: 8px; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--dock-h) + var(--safe-b) + 24px); z-index: 300;
+  position: fixed; left: 50%; top: calc(var(--vvtop) + var(--vvh) - var(--dock-h) - var(--safe-b) - 70px); z-index: 300;
   transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
   background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 14px; font-size: 14px; font-weight: 550;

@@ -13,8 +13,23 @@ function syncViewport() {
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', syncViewport);
   visualViewport.addEventListener('scroll', syncViewport);
+  window.addEventListener('orientationchange', () => setTimeout(syncViewport, 300));
   syncViewport();
 }
+
+// Пока открыта клавиатура, нижняя панель скрыта. После её закрытия iOS иногда не возвращает
+// высоту окна — подталкиваем перерасчёт и заново берём размеры видимой области.
+const isField = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && !['checkbox', 'radio', 'file', 'button'].includes(el.type);
+document.addEventListener('focusin', (e) => { if (isField(e.target)) document.body.classList.add('kb'); });
+document.addEventListener('focusout', (e) => {
+  if (!isField(e.target)) return;
+  setTimeout(() => {
+    if (isField(document.activeElement)) return;
+    document.body.classList.remove('kb');
+    window.scrollTo(window.scrollX, window.scrollY);
+    syncViewport();
+  }, 120);
+});
 
 /**
  * Открыть лист.
