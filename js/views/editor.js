@@ -5,7 +5,7 @@ import { openSheet, confirmSheet, toast } from '../sheet.js';
 
 const EMOJI = ['🛒', '🍎', '☕', '🍔', '🍷', '🚕', '🚇', '⛽', '🚗', '✈️', '🏠', '💡', '📱', '💻', '🛍️', '👕', '💊', '🏋️', '🎬', '🎮', '📚', '🎓', '🐶', '👶', '🎁', '💐', '🔁', '💳', '🏦', '📈', '💱', '₿', '💼', '🧰', '💰', '↩️', '🧾', '✂️', '🔧', '•'];
 
-function segmented(options, value, onChange) {
+export function segmented(options, value, onChange) {
   const el = h('div', { class: 'seg', role: 'tablist' });
   const render = () => {
     clear(el);
@@ -24,7 +24,7 @@ const fmtRate = (r) => {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: frac, useGrouping: false }).format(r);
 };
 
-function dateRow(d, onChange) {
+export function dateRow(d, onChange) {
   const wrap = h('div', { class: 'date-row' });
   const input = h('input', { type: 'date', class: 'date-input', value: d.date, max: addDays(dayKey(), 366), 'aria-label': 'Дата', onchange: (e) => { if (e.target.value) { d.date = e.target.value; render(); onChange?.(); } } });
   function render() {
@@ -128,7 +128,7 @@ function rateField(d, onChange) {
 }
 
 // ---------- трата / доход ----------
-export function openTxnEditor({ type = 'expense', txn = null, onDone } = {}) {
+export function openTxnEditor({ type = 'expense', txn = null, onDone, date = null } = {}) {
   const st = store.settings();
   const startCur = txn?.currency || (st.currencies.includes(st.lastCurrency) ? st.lastCurrency : st.base);
   const d = {
@@ -138,7 +138,7 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone } = {}) {
     rate: txn?.rate || store.rate(startCur),
     categoryId: txn?.categoryId || null,
     note: txn?.note || '',
-    date: txn?.date || dayKey(),
+    date: txn?.date || date || dayKey(),
   };
 
   const amountInput = h('input', {

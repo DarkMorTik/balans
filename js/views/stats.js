@@ -67,7 +67,7 @@ export function renderStats(root) {
   root.append(grid);
 
   // --- анализатор ---
-  const ins = A.insights(st, store.category, today);
+  const ins = A.insights(st, store.category, today, store.rate);
   const insWrap = h('div', { class: 'insights' });
   if (!ins.length) {
     insWrap.append(h('div', { class: 'insight good' }, h('span', { class: 'ins-ico' }, '✨'),

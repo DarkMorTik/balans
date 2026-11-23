@@ -204,6 +204,13 @@ export function dayTitle(key, today = dayKey()) {
   const base = `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
   return d.getFullYear() === t.getFullYear() ? `${base}, ${wd}` : `${base} ${d.getFullYear()}`;
 }
+/** «23 ноября, понедельник» */
+export function fullDay(key) {
+  const d = parseDay(key);
+  const wd = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'][d.getDay()];
+  const y = d.getFullYear() === new Date().getFullYear() ? '' : ` ${d.getFullYear()}`;
+  return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}${y}, ${wd}`;
+}
 export function shortDate(key) {
   const d = parseDay(key);
   return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;

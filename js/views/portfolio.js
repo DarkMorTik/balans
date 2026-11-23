@@ -5,6 +5,8 @@ import { openSheet, toast } from '../sheet.js';
 import { openExchangeEditor, pickCurrency } from './editor.js';
 import { txnListSheet } from './home.js';
 import { guilloche } from '../guilloche.js';
+import * as P from '../planner.js';
+import { openDebtEditor, debtSheet } from './planner-sheets.js';
 
 const ui = { marketAll: false, marketQ: '' };
 
@@ -120,13 +122,19 @@ export function renderPortfolio(root) {
 
   root.append(h('h1', { class: 'page-title' }, 'Портфель'));
 
-  root.append(h('section', { class: ['note', 'brass'] },
-    guilloche({ w: 360, h: 190, seed: `pf${crypto.length}${fiat.length}`, health: cCost > 0 ? cPnl / cCost : 0.2 }),
-    h('div', { class: 'note-top' }, h('span', { class: 'micro' }, 'Все активы · по текущим курсам')),
-    h('div', { class: 'note-sum' }, money(total, b)),
+  const debts = st.debts || [];
+  const owe = debts.filter((d) => d.kind !== 'lent').reduce((a, d) => a + P.debtRemaining(d) * store.rate(d.currency), 0);
+  const lent = debts.filter((d) => d.kind === 'lent').reduce((a, d) => a + P.debtRemaining(d) * store.rate(d.currency), 0);
+  const net = total + lent - owe;
+
+  root.append(h('section', { class: ['note', 'brass', net < 0 && 'neg'] },
+    guilloche({ w: 360, h: 190, seed: `pf${crypto.length}${fiat.length}${debts.length}`, health: total > 0 ? Math.max(-1, Math.min(1, net / total)) : 0.2 }),
+    h('div', { class: 'note-top' }, h('span', { class: 'micro' }, 'Чистый капитал · активы − долги')),
+    h('div', { class: 'note-sum' }, money(net, b)),
     h('div', { class: 'note-foot' },
-      h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'крипто'), h('span', { class: 'mono' }, money(cTotal, b))),
-      h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'прибыль'), h('span', { class: ['mono', cPnl >= 0 ? 'inc' : 'neg'] }, cCost > 0 ? `${money(cPnl, b, { sign: true })} · ${pct(cPnl, cCost).toFixed(1)}%` : '—')))));
+      h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'активы'), h('span', { class: 'mono' }, money(total + lent, b))),
+      h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'долги'), h('span', { class: ['mono', owe > 0 && 'neg'] }, owe > 0 ? money(-owe, b) : '0')),
+      h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'крипто'), h('span', { class: ['mono', cPnl >= 0 ? 'inc' : 'neg'] }, cCost > 0 ? `${pct(cPnl, cCost) >= 0 ? '+' : ''}${pct(cPnl, cCost).toFixed(1)}%` : money(cTotal, b))))));
 
   const status = h('span', { class: 'micro' }, s.livePrices ? `Курсы ${ago(s.pricesAt)}` : 'Онлайн-курсы выключены в настройках');
   const refreshBtn = h('button', { class: 'chip small', disabled: !s.livePrices, onclick: async () => {
@@ -138,6 +146,26 @@ export function renderPortfolio(root) {
   root.append(h('div', { class: 'dock-actions two' },
     h('button', { class: 'act act-swap', onclick: () => openExchangeEditor({}) }, h('span', { class: 'act-sign' }, '⇄'), 'Купить / обменять'),
     h('button', { class: 'act', onclick: () => openAdjustSheet() }, h('span', { class: 'act-sign' }, '±'), 'Остаток')));
+
+  // --- обязательства ---
+  root.append(h('div', { class: 'set-title micro section-head' }, h('span', {}, 'Обязательства'), owe > 0 ? h('span', { class: 'mono' }, `долг ${money(owe, b)}`) : null));
+  const dl = h('div', { class: 'card list' });
+  [...debts].sort((x, y) => (P.debtRemaining(y) > 0) - (P.debtRemaining(x) > 0) || y.principal - x.principal).forEach((d) => {
+    const rem = P.debtRemaining(d);
+    const prog = P.debtProgress(d);
+    const isLent = d.kind === 'lent';
+    const po = P.payoff(d);
+    dl.append(h('button', { class: ['row', 'debt-row', rem === 0 && 'is-paid'], onclick: () => debtSheet(d) },
+      h('span', { class: 'cat-ico swap' }, P.DEBT_KINDS[d.kind]?.icon || '🏦'),
+      h('span', { class: 'row-main' },
+        h('span', { class: 'row-title' }, d.name),
+        h('span', { class: 'bar-track' }, h('span', { class: 'bar-fill', style: { '--c': isLent ? 'var(--mint)' : 'var(--violet)', '--w': `${Math.max(2, Math.round(prog * 100))}%` } })),
+        h('span', { class: 'row-sub' }, rem === 0 ? 'погашено ✓' : [P.DEBT_KINDS[d.kind]?.label, d.payment ? `${money(d.payment, d.currency)}${d.day ? ` · ${d.day} числа` : ''}` : null, po?.date ? `до ${po.date.slice(5, 7)}.${po.date.slice(2, 4)}` : null].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-end' }, h('span', { class: ['amount', isLent && 'inc'] }, money(isLent ? rem : -rem, d.currency)), h('span', { class: 'row-sub mono' }, `${Math.round(prog * 100)}%`))));
+  });
+  dl.append(h('button', { class: 'row', onclick: () => openDebtEditor({}) },
+    h('span', { class: 'cat-ico add-ico' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Добавить обязательство'), h('span', { class: 'row-sub' }, 'Кредит, рассрочка, ипотека, долг или «мне должны»'))));
+  root.append(dl);
 
   if (!entries.length) {
     root.append(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '₿'), 'В портфеле пока пусто',

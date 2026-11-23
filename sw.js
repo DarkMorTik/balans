@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэш оболочки приложения. Никаких внешних запросов.
-const VERSION = 'balans-v5';
+const VERSION = 'balans-v6';
 const SHELL = [
   './',
   'index.html',
@@ -15,6 +15,7 @@ const SHELL = [
   'js/charts.js',
   'js/market.js',
   'js/guilloche.js',
+  'js/planner.js',
   'js/sheet.js',
   'js/views/lock.js',
   'js/views/home.js',
@@ -22,6 +23,9 @@ const SHELL = [
   'js/views/stats.js',
   'js/views/settings.js',
   'js/views/portfolio.js',
+  'js/views/calendar.js',
+  'js/views/plans.js',
+  'js/views/planner-sheets.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
@@ -46,7 +50,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   e.respondWith(
-    fetch(req)
+    fetch(new Request(req, { cache: 'no-cache' }))
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

@@ -155,7 +155,7 @@ const norm = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').tri
  * Умный анализатор. Возвращает список находок:
  * { key, level: 'warn'|'info'|'good', icon, title, text, ids? }
  */
-export function insights(state, catOf, today = dayKey()) {
+export function insights(state, catOf, today = dayKey(), rateOf = null) {
   const base = state.settings.base;
   const fmt = (v) => money(v, base);
   const txns = enrich(state);
@@ -341,6 +341,24 @@ export function insights(state, catOf, today = dayKey()) {
     const rate = prevMonth.net / prevMonth.inc;
     if (rate >= 0.2) push({ key: `save:${mStart}`, level: 'good', icon: '✅', title: `Вы сохранили ${Math.round(rate * 100)}% дохода`, text: `В прошлом месяце остаток ${fmt(prevMonth.net)}. Отличный результат.` });
     else if (rate < 0) push({ key: `deficit:${mStart}`, level: 'warn', icon: '🔻', title: 'Прошлый месяц в минусе', text: `Расходы превысили доходы на ${fmt(-prevMonth.net)}.` });
+  }
+
+  // 10. Нагрузка обязательных платежей (регулярные + кредиты) относительно дохода
+  if (rateOf && ((state.recurring || []).length || (state.debts || []).length)) {
+    const rec = (state.recurring || []).filter((r) => r.active !== false)
+      .reduce((a, r) => a + (r.freq === 'weekly' ? r.amount * 4.345 : r.freq === 'yearly' ? r.amount / 12 : r.amount) * rateOf(r.currency), 0);
+    const loans = (state.debts || []).filter((d) => d.kind !== 'lent' && d.payment > 0)
+      .reduce((a, d) => a + d.payment * rateOf(d.currency), 0);
+    const fixed = rec + loans;
+    const incRef = Math.max(month.inc, prevMonth.inc);
+    if (fixed > 0 && incRef > 0) {
+      const share = fixed / incRef;
+      push({
+        key: `fixed:${mStart}:${Math.round(share * 20)}`, level: share > 0.5 ? 'warn' : 'info', icon: '📌',
+        title: `Обязательные платежи: ${Math.round(share * 100)}% дохода`,
+        text: `${fmt(fixed)} в месяц уходит на регулярные платежи${loans ? ' и кредиты' : ''}. ${share > 0.5 ? 'Это больше половины дохода — стоит пересмотреть подписки или условия кредитов.' : 'Свободно остаётся около ' + fmt(incRef - fixed) + '.'}`,
+      });
+    }
   }
 
   const order = { warn: 0, info: 1, good: 2 };

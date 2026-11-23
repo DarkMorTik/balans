@@ -28,10 +28,13 @@ const DEFAULT_CATEGORIES = [
   ['Обмен валюты', '💱', 'both', '#40c8e0'],
   ['Крипто', '₿', 'both', '#e8c66a'],
   ['Комиссии', '%', 'expense', '#9aa39a'],
+  ['Кредиты', '🏦', 'expense', '#7aa7ff'],
   ['Подарки', '🎁', 'both', '#ff453a'],
   ['Другое', '•', 'both', '#8e8e93'],
 ];
 const EXTRA_V2 = ['Крипто', 'Комиссии'];
+const EXTRA_V3 = ['Кредиты'];
+const PLANNER_KEYS = ['recurring', 'debts', 'tasks', 'notes', 'goals'];
 
 export function initialState(base = 'RUB') {
   return {
@@ -49,23 +52,37 @@ export function initialState(base = 'RUB') {
     categories: DEFAULT_CATEGORIES.map(([name, icon, type, color]) => ({ id: uid(), name, icon, type, color, limit: 0 })),
     txns: [],
     dismissed: [],
-    schema: 2,
+    recurring: [], // регулярные платежи
+    debts: [],     // обязательства
+    tasks: [],     // задачи по дням
+    notes: [],     // заметки, планы, идеи
+    goals: [],     // финансовые цели
+    schema: 3,
   };
+}
+
+function addCategories(st, names) {
+  for (const name of names) {
+    if (st.categories.some((c) => c.name === name)) continue;
+    const def = DEFAULT_CATEGORIES.find((d) => d[0] === name);
+    st.categories.splice(Math.max(0, st.categories.length - 2), 0, { id: uid(), name, icon: def[1], type: def[2], color: def[3], limit: 0 });
+  }
 }
 
 /** Обновление данных, созданных прошлой версией приложения. */
 export function migrate() {
   const st = state();
-  if ((st.schema || 1) >= 2) return;
-  for (const name of EXTRA_V2) {
-    if (st.categories.some((c) => c.name === name)) continue;
-    const def = DEFAULT_CATEGORIES.find((d) => d[0] === name);
-    st.categories.splice(Math.max(0, st.categories.length - 2), 0, { id: uid(), name, icon: def[1], type: def[2], color: def[3], limit: 0 });
+  const v = st.schema || 1;
+  if (v >= 3) return;
+  if (v < 2) {
+    addCategories(st, EXTRA_V2);
+    st.settings.livePrices = true;
+    st.settings.pricesAt ??= 0;
+    st.settings.manualRates ||= {};
   }
-  st.settings.livePrices = true;
-  st.settings.pricesAt ??= 0;
-  st.settings.manualRates ||= {};
-  st.schema = 2;
+  addCategories(st, EXTRA_V3);
+  for (const k of PLANNER_KEYS) st[k] ||= [];
+  st.schema = 3;
   return vault.save();
 }
 
@@ -283,6 +300,13 @@ export function holdings() {
 export function deleteTxn(id) {
   const st = state();
   st.txns = st.txns.filter((t) => t.id !== id);
+  // снять отметку «оплачено» у регулярного платежа и убрать платёж по долгу, связанные с этой операцией
+  for (const r of st.recurring || []) {
+    for (const [d, tid] of Object.entries(r.paid || {})) if (tid === id) delete r.paid[d];
+  }
+  for (const d of st.debts || []) {
+    if (d.payments?.some((p) => p.txnId === id)) d.payments = d.payments.filter((p) => p.txnId !== id);
+  }
   return changed();
 }
 
@@ -395,5 +419,99 @@ export function validateState(s) {
     throw new Error('Файл не содержит данных «Баланса»');
   }
   s.dismissed ||= [];
+  for (const k of PLANNER_KEYS) s[k] ||= [];
   return s;
+}
+
+// ---------- планировщик: общий CRUD ----------
+/** Сохранить элемент коллекции (recurring | debts | tasks | notes | goals). */
+export function upsert(coll, item) {
+  const st = state();
+  st[coll] ||= [];
+  const it = { ...item, id: item.id || uid(), createdAt: item.createdAt || Date.now(), updatedAt: Date.now() };
+  const i = st[coll].findIndex((x) => x.id === it.id);
+  if (i >= 0) st[coll][i] = it; else st[coll].push(it);
+  changed();
+  return it;
+}
+export function removeItem(coll, id) {
+  const st = state();
+  st[coll] = (st[coll] || []).filter((x) => x.id !== id);
+  return changed();
+}
+export const items = (coll) => state()[coll] || [];
+export const findItem = (coll, id) => items(coll).find((x) => x.id === id);
+
+// ---------- регулярные платежи ----------
+/** Отметить списание оплаченным: создаёт трату и связывает её с датой. */
+export function payRecurring(r, date) {
+  const st = state();
+  const rr = findItem('recurring', r.id);
+  if (!rr || rr.paid?.[date]) return Promise.resolve();
+  const t = buildTxn({
+    type: 'expense', amount: rr.amount, currency: rr.currency, rate: rate(rr.currency),
+    categoryId: rr.categoryId || categoryByName('Подписки')?.id, note: rr.name, date,
+  });
+  st.txns.push(t);
+  rr.paid = { ...(rr.paid || {}), [date]: t.id };
+  return changed();
+}
+export function unpayRecurring(r, date) {
+  const st = state();
+  const rr = findItem('recurring', r.id);
+  const id = rr?.paid?.[date];
+  if (!id) return Promise.resolve();
+  st.txns = st.txns.filter((t) => t.id !== id);
+  delete rr.paid[date];
+  return changed();
+}
+
+// ---------- обязательства ----------
+/** Платёж по обязательству. record — записать ли в траты/доходы. */
+export function payDebt(d, amount, date = dayKey(), record = true) {
+  const st = state();
+  const dd = findItem('debts', d.id);
+  if (!dd || !(amount > 0)) return Promise.resolve();
+  let txnId = null;
+  if (record) {
+    const t = buildTxn({
+      type: dd.kind === 'lent' ? 'income' : 'expense', amount, currency: dd.currency, rate: rate(dd.currency),
+      categoryId: dd.kind === 'lent' ? categoryByName('Другое')?.id : categoryByName('Кредиты')?.id || categoryByName('Другое')?.id,
+      note: `${dd.kind === 'lent' ? 'Возврат долга' : 'Платёж'}: ${dd.name}`, date,
+    });
+    st.txns.push(t);
+    txnId = t.id;
+  }
+  dd.payments = [...(dd.payments || []), { id: uid(), date, amount: roundAmt(amount, dd.currency), txnId }];
+  return changed();
+}
+export function removeDebtPayment(d, pid) {
+  const st = state();
+  const dd = findItem('debts', d.id);
+  const p = dd?.payments?.find((x) => x.id === pid);
+  if (!p) return Promise.resolve();
+  if (p.txnId) st.txns = st.txns.filter((t) => t.id !== p.txnId);
+  dd.payments = dd.payments.filter((x) => x.id !== pid);
+  return changed();
+}
+
+// ---------- задачи ----------
+export function toggleTask(t, date) {
+  const tt = findItem('tasks', t.id);
+  if (!tt) return Promise.resolve();
+  if ((tt.repeat || 'none') === 'none') tt.done = !tt.done;
+  else {
+    const set = new Set(tt.doneDates || []);
+    if (set.has(date)) set.delete(date); else set.add(date);
+    tt.doneDates = [...set].sort().slice(-400);
+  }
+  return changed();
+}
+
+// ---------- цели ----------
+export function contributeGoal(g, amount, date = dayKey()) {
+  const gg = findItem('goals', g.id);
+  if (!gg || !amount) return Promise.resolve();
+  gg.contributions = [...(gg.contributions || []), { id: uid(), date, amount: round2(amount) }];
+  return changed();
 }

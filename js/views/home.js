@@ -1,9 +1,36 @@
 // Главный экран: «купюра» месяца, действия, лента операций.
-import { h, clear, money, dayKey, dayTitle, monthStart, addMonths, monthName, cap, round2 } from '../util.js';
+import { h, clear, money, dayKey, dayTitle, monthStart, addMonths, addDays, monthName, cap, round2, fullDay } from '../util.js';
 import * as store from '../store.js';
 import { openTxnEditor, openExchangeEditor } from './editor.js';
 import { openSheet, confirmSheet, toast } from '../sheet.js';
 import { guilloche } from '../guilloche.js';
+import * as P from '../planner.js';
+import { eventRow, taskRow } from './calendar.js';
+
+const nav = (to) => window.dispatchEvent(new CustomEvent('nav', { detail: to }));
+
+function todayTicket(st, today) {
+  const events = P.plannedEvents(st, addDays(today, -31), addDays(today, 8), today).filter((e) => !e.paid && (e.overdue || e.date >= today));
+  const tasks = P.tasksFor(st, today);
+  const over = P.overdueTasks(st, today);
+  if (!events.length && !tasks.length && !over.length) return null;
+  const done = tasks.filter((t) => P.isDone(t, today)).length;
+  const t = h('section', { class: 'ticket' },
+    h('div', { class: 'ticket-head' }, h('span', { class: 'micro' }, `Чек дня · ${fullDay(today).split(',')[0]}`),
+      h('button', { class: 'micro link-micro', onclick: () => nav('calendar') }, 'Календарь ›')));
+  if (events.length) {
+    t.append(h('div', { class: 'ticket-label micro' }, 'Скоро спишется'), h('div', { class: 'list' }, events.slice(0, 3).map((e) => eventRow(e, { showDate: true }))));
+    if (events.length > 3) t.append(h('button', { class: 'ticket-more micro', onclick: () => nav('calendar') }, `ещё ${events.length - 3}`));
+  }
+  if (events.length && (tasks.length || over.length)) t.append(h('div', { class: 'perf' }));
+  if (tasks.length || over.length) {
+    t.append(h('div', { class: 'ticket-label micro' }, h('span', {}, 'Дела на сегодня'), h('span', { class: 'mono' }, `${done}/${tasks.length}${over.length ? ` · просрочено ${over.length}` : ''}`)));
+    const undone = tasks.filter((x) => !P.isDone(x, today));
+    t.append(h('div', { class: 'list' }, (undone.length ? undone : tasks).slice(0, 3).map((x) => taskRow(x, today))));
+    t.append(h('button', { class: 'ticket-more micro', onclick: () => nav('plans') }, 'Все дела ›'));
+  }
+  return t;
+}
 
 const ui = { query: '', limit: 120, allTime: false, searchOpen: false };
 
@@ -94,12 +121,13 @@ export function renderHome(root) {
     h('div', { class: 'note-top' },
       h('button', { class: 'micro note-period', onclick: () => { ui.allTime = !ui.allTime; renderHome(root); }, 'aria-label': 'Сменить период' },
         `Баланс · ${periodLabel}`, h('span', { class: 'chev' }, ' ⌄')),
-      h('button', { class: ['icon-btn', ui.searchOpen && 'on'], 'aria-label': 'Поиск', onclick: () => {
+      h('span', { class: 'note-tools' }, h('button', { class: ['icon-btn', ui.searchOpen && 'on'], 'aria-label': 'Поиск', onclick: () => {
         ui.searchOpen = !ui.searchOpen;
         if (!ui.searchOpen) ui.query = '';
         renderHome(root);
         if (ui.searchOpen) root.querySelector('.search')?.focus();
-      } }, searchIcon())),
+      } }, searchIcon()),
+      h('button', { class: 'icon-btn gear', 'aria-label': 'Настройки', onclick: () => nav('settings') }, '⚙'))),
     h('div', { class: 'note-sum' }, money(net, base, { sign: true })),
     h('div', { class: 'note-foot' },
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'приход'), h('span', { class: 'mono inc' }, money(inc, base))),
@@ -112,6 +140,8 @@ export function renderHome(root) {
     h('button', { class: 'act act-swap', onclick: () => openExchangeEditor({}), 'aria-label': 'Обмен' }, h('span', { class: 'act-sign' }, '⇄'), 'Обмен'));
 
   root.append(note, actions);
+  const ticket = todayTicket(store.state(), today);
+  if (ticket) root.append(ticket);
 
   if (ui.searchOpen) {
     root.append(h('input', {

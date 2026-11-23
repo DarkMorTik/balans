@@ -20,6 +20,7 @@ export async function renderSettings(root, { lockNow }) {
   const s = st.settings;
   const meta = await vault.getMeta();
 
+  root.append(h('button', { class: 'back-btn', onclick: () => window.dispatchEvent(new CustomEvent('nav', { detail: 'home' })) }, '‹ Главная'));
   root.append(h('h1', { class: 'page-title' }, 'Настройки'));
 
   // --- валюты и курсы ---
