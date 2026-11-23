@@ -6,6 +6,11 @@ import { encryptBackup, decryptBackup, keyFromPassword, unwrapKey, unb64 } from 
 import { openSheet, confirmSheet, toast } from '../sheet.js';
 import { openCategoryEditor, pickCurrency } from './editor.js';
 import { pinPad } from './lock.js';
+import { applyTheme } from '../theme.js';
+import { mergeStates } from '../sync.js';
+import { startCsvImport } from './import.js';
+import { openAccountEditor, accountSheet, openTemplateEditor } from './money-sheets.js';
+import { openBudgetSheet } from './budget.js';
 
 const group = (title, ...rows) => h('section', { class: 'set-group' }, title && h('div', { class: 'set-title micro' }, title), h('div', { class: 'card list' }, ...rows));
 const row = (label, value, onclick, extra = {}) => h(onclick ? 'button' : 'div', { class: ['row', 'set-row', extra.danger && 'danger'], onclick },
@@ -22,6 +27,25 @@ export async function renderSettings(root, { lockNow }) {
 
   root.append(h('button', { class: 'back-btn', onclick: () => window.dispatchEvent(new CustomEvent('nav', { detail: 'home' })) }, '‹ Главная'));
   root.append(h('h1', { class: 'page-title' }, 'Настройки'));
+
+  // --- оформление ---
+  const themeSeg = h('div', { class: 'seg small' }, [['auto', 'Авто'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([v, l]) =>
+    h('button', { class: (s.theme || 'auto') === v ? 'on' : '', onclick: () => { applyTheme(v); store.setSetting('theme', v); } }, l)));
+  root.append(group('Оформление',
+    h('div', { class: 'row set-row' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Тема')), themeSeg)));
+
+  // --- счета, шаблоны, бюджет ---
+  const accs = st.accounts || [];
+  const bals = store.accountBalances();
+  root.append(group('Счета и кошельки',
+    ...accs.map((a) => row(a.name, money(bals[a.id]?.balance || 0, a.currency), () => accountSheet(a), { icon: a.icon || '▫', color: '#a78bfa', sub: (store.ACCOUNT_KINDS[a.kind]?.label || '') + (a.archived ? ' · в архиве' : '') })),
+    row('Добавить счёт', null, () => openAccountEditor({}), { icon: '+', color: '#7fe0c2' })));
+  const tpls = st.templates || [];
+  root.append(group('Шаблоны быстрых операций',
+    ...tpls.map((t) => row(t.name, money(t.type === 'income' ? t.amount : -t.amount, t.currency, { sign: t.type === 'income' }), () => openTemplateEditor({ item: t }), { icon: t.icon || '•', color: '#d9b871' })),
+    row('Новый шаблон', null, () => openTemplateEditor({}), { icon: '+', color: '#7fe0c2', sub: 'Кнопка на главном — добавить трату в одно касание' })));
+  root.append(group('Бюджет',
+    row('Бюджет на месяц', s.budgetIncome ? money(s.budgetIncome, s.base) : null, () => openBudgetSheet(), { sub: 'Лимиты по ярлыкам и ожидаемый доход' })));
 
   // --- валюты и курсы ---
   const rateLabel = (c) => {
@@ -78,9 +102,17 @@ export async function renderSettings(root, { lockNow }) {
     row('Заблокировать сейчас', null, lockNow, { noChevron: true })));
 
   // --- данные ---
+  root.append(group('Импорт',
+    row('Банковская выписка (CSV)', null, () => startCsvImport(), { sub: 'Ярлыки подберутся автоматически, дубли отметятся' })));
+
+  root.append(group('Синхронизация iPhone ↔ iPad ↔ Mac',
+    row('Отправить на другое устройство', null, () => syncExport(), { sub: 'Зашифрованный снимок → Файлы / iCloud Drive / AirDrop' }),
+    row('Объединить с другим устройством', null, () => syncImport(), { sub: 'Новое добавится, изменённое обновится, удалённое удалится' }),
+    h('p', { class: 'set-note muted small' }, 'Без серверов: устройства обмениваются файлом, зашифрованным паролем синхронизации. Данные не заменяются, а объединяются.')));
+
   root.append(group('Резервная копия',
-    row('Экспорт (зашифрованный файл)', null, () => exportSheet(), { sub: 'Для переноса на iPad/Mac или хранения' }),
-    row('Импорт из файла', null, () => importBackup())));
+    row('Экспорт (зашифрованный файл)', null, () => exportSheet(), { sub: 'Полная копия для хранения' }),
+    row('Восстановить из копии', null, () => importBackup(), { sub: 'Заменяет все данные на этом устройстве' })));
 
   root.append(group('',
     row('Удалить все данные', null, async () => {
@@ -89,7 +121,7 @@ export async function renderSettings(root, { lockNow }) {
     }, { danger: true, noChevron: true })));
 
   root.append(h('div', { class: 'about' },
-    h('p', {}, h('b', {}, 'Баланс'), ' · версия 2.0'),
+    h('p', {}, h('b', {}, 'Баланс'), ' · версия 4.0'),
     h('p', {}, `Данные хранятся только на этом устройстве и зашифрованы AES-256-GCM. Ключ выводится из PIN (PBKDF2, 600 000 итераций) или из passkey Face ID. Единственный сетевой запрос — загрузка курсов (только коды валют, можно выключить). Нет аналитики, рекламы и сторонних библиотек. Операций: ${st.txns.length}.`)));
 }
 
@@ -223,6 +255,66 @@ function importBackup() {
     } catch (e) {
       toast(e.message || 'Ошибка импорта');
     }
+  });
+  input.click();
+}
+
+// ---------- синхронизация через файл ----------
+async function syncPassword(confirm) {
+  const saved = store.settings().syncPass;
+  if (saved && !confirm) return saved;
+  const pw = await passwordSheet({
+    title: 'Пароль синхронизации', confirm, button: 'Продолжить',
+    hint: confirm
+      ? 'Одинаковый на всех ваших устройствах. Им шифруется снимок данных. Сохранится в зашифрованных настройках, вводить каждый раз не нужно.'
+      : 'Введите пароль синхронизации, заданный на другом устройстве.',
+  });
+  return pw;
+}
+
+async function syncExport() {
+  const pw = await syncPassword(!store.settings().syncPass);
+  if (!pw) return;
+  if (!store.settings().syncPass) await store.setSetting('syncPass', pw);
+  toast('Шифрование…');
+  const { syncPass, ...settingsNoPass } = store.state().settings;
+  const snapshot = { ...store.state(), settings: settingsNoPass };
+  const backup = await encryptBackup(snapshot, pw);
+  backup.kind = 'sync';
+  const name = `balans-sync-${dayKey()}.balans`;
+  const file = new File([JSON.stringify(backup)], name, { type: 'application/octet-stream' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Синхронизация Баланса' }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function syncImport() {
+  const input = h('input', { type: 'file', accept: '.balans,.json,application/json,application/octet-stream' });
+  input.addEventListener('change', async () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    let parsed;
+    try { parsed = JSON.parse(await f.text()); } catch { return toast('Не удалось прочитать файл'); }
+    let pw = store.settings().syncPass;
+    let remote = null;
+    for (let attempt = 0; attempt < 2 && !remote; attempt++) {
+      if (!pw || attempt) pw = await syncPassword(false);
+      if (!pw) return;
+      try { remote = store.validateState(await decryptBackup(parsed, pw)); } catch { if (attempt) return toast('Неверный пароль или повреждённый файл'); }
+    }
+    const { state, stats } = mergeStates(store.state(), remote);
+    state.settings.syncPass = pw;
+    const ok = await confirmSheet('Объединить данные?', {
+      ok: 'Объединить', danger: false,
+      detail: `Будет добавлено: ${stats.added}, обновлено: ${stats.updated}, удалено: ${stats.removed}. Остальное останется как есть.`,
+    });
+    if (!ok) return;
+    await store.applyMerged(state);
+    toast('Данные синхронизированы');
   });
   input.click();
 }

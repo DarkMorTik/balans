@@ -1,23 +1,46 @@
 // Главный экран: «купюра» месяца, действия, лента операций.
-import { h, clear, money, dayKey, dayTitle, monthStart, addMonths, addDays, monthName, cap, round2, fullDay } from '../util.js';
+import { h, clear, money, dayKey, dayTitle, monthStart, addMonths, addDays, monthName, cap, round2, fullDay, isCrypto, plural } from '../util.js';
 import * as store from '../store.js';
 import { openTxnEditor, openExchangeEditor } from './editor.js';
 import { openSheet, confirmSheet, toast } from '../sheet.js';
 import { guilloche } from '../guilloche.js';
 import * as P from '../planner.js';
 import { eventRow, taskRow } from './calendar.js';
+import { useTemplate, openTemplateEditor, openSmartInput, openTransferSheet } from './money-sheets.js';
+
+/** Сколько денег есть сейчас: сумма счетов или (если счетов нет) фиатные остатки по операциям. */
+export function availableNow() {
+  const accs = store.activeAccounts();
+  const b = store.accountBalances();
+  const inAccounts = accs.filter((x) => !isCrypto(x.currency)).reduce((a, x) => a + (b[x.id]?.inBase || 0), 0);
+  const outside = Object.entries(store.holdings(accs.length ? store.unassignedFilter() : null)).filter(([c]) => !isCrypto(c)).reduce((a, [, e]) => a + e.value, 0);
+  return inAccounts + outside;
+}
 
 const nav = (to) => window.dispatchEvent(new CustomEvent('nav', { detail: to }));
 
 function todayTicket(st, today) {
-  const events = P.plannedEvents(st, addDays(today, -31), addDays(today, 8), today).filter((e) => !e.paid && (e.overdue || e.date >= today));
+  const events = P.plannedEvents(st, addDays(today, -31), addDays(today, 8), today).filter((e) => !e.paid && e.type !== 'income' && (e.overdue || e.date >= today));
   const tasks = P.tasksFor(st, today);
   const over = P.overdueTasks(st, today);
-  if (!events.length && !tasks.length && !over.length) return null;
+  const pay = P.paydayForecast(st, availableNow(), store.rate, today);
+  if (!events.length && !tasks.length && !over.length && !pay) return null;
   const done = tasks.filter((t) => P.isDone(t, today)).length;
+  const base = st.settings.base;
   const t = h('section', { class: 'ticket' },
     h('div', { class: 'ticket-head' }, h('span', { class: 'micro' }, `Чек дня · ${fullDay(today).split(',')[0]}`),
       h('button', { class: 'micro link-micro', onclick: () => nav('calendar') }, 'Календарь ›')));
+  if (pay) {
+    t.append(h('div', { class: 'payday' },
+      h('div', { class: 'payday-main' },
+        h('span', { class: 'micro' }, `до «${pay.title}» · ${pay.days} ${plural(pay.days, 'день', 'дня', 'дней')}`),
+        h('span', { class: ['payday-sum', 'mono', pay.free < 0 && 'neg'] }, `${money(pay.perDay, base)} / день`)),
+      h('div', { class: 'payday-sub muted small' },
+        pay.free < 0
+          ? `Не хватает ${money(-pay.free, base)}: до дохода спишется ${money(pay.plannedBefore, base)}.`
+          : `Свободно ${money(pay.free, base)}${pay.plannedBefore ? ` после списаний на ${money(pay.plannedBefore, base)}` : ''}.`)));
+    if (events.length || tasks.length || over.length) t.append(h('div', { class: 'perf' }));
+  }
   if (events.length) {
     t.append(h('div', { class: 'ticket-label micro' }, 'Скоро спишется'), h('div', { class: 'list' }, events.slice(0, 3).map((e) => eventRow(e, { showDate: true }))));
     if (events.length > 3) t.append(h('button', { class: 'ticket-more micro', onclick: () => nav('calendar') }, `ещё ${events.length - 3}`));
@@ -49,6 +72,16 @@ function openAdjust(t) {
 
 export function txnRow(t, { showDate = false } = {}) {
   const base = store.base();
+  if (t.type === 'exchange' && t.accountId && t.toAccountId) {
+    const from = store.account(t.accountId), to = store.account(t.toAccountId);
+    return h('button', { class: 'row txn', onclick: () => openTransferSheet({ txn: t }) },
+      h('span', { class: 'cat-ico swap' }, '↔'),
+      h('span', { class: 'row-main' },
+        h('span', { class: 'row-title' }, `${from?.name || '?'} → ${to?.name || '?'}`),
+        h('span', { class: 'row-sub' }, ['Перевод', t.note && !t.note.includes('→') ? t.note : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-end' }, h('span', { class: 'amount' }, money(t.amount, t.currency)),
+        t.currency !== t.toCurrency ? h('span', { class: 'row-sub mono' }, `→ ${money(t.toAmount, t.toCurrency)}`) : null));
+  }
   if (t.type === 'exchange') {
     return h('button', { class: 'row txn', onclick: () => openExchangeEditor({ txn: t }) },
       h('span', { class: 'cat-ico swap' }, '⇄'),
@@ -74,7 +107,7 @@ export function txnRow(t, { showDate = false } = {}) {
     h('span', { class: 'cat-ico', style: { '--c': c.color } }, c.icon),
     h('span', { class: 'row-main' },
       h('span', { class: 'row-title' }, t.note || c.name),
-      h('span', { class: 'row-sub' }, [t.note ? c.name : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-sub' }, [t.note ? c.name : null, t.accountId ? store.account(t.accountId)?.name : null, showDate ? dayTitle(t.date) : null].filter(Boolean).join(' · '))),
     h('span', { class: 'row-end' },
       h('span', { class: ['amount', t.type === 'income' && 'inc'] }, money(sign * t.amount, t.currency, { sign: t.type === 'income' })),
       foreign && h('span', { class: 'row-sub mono' }, money(sign * store.inBase(t), base))));
@@ -121,7 +154,8 @@ export function renderHome(root) {
     h('div', { class: 'note-top' },
       h('button', { class: 'micro note-period', onclick: () => { ui.allTime = !ui.allTime; renderHome(root); }, 'aria-label': 'Сменить период' },
         `Баланс · ${periodLabel}`, h('span', { class: 'chev' }, ' ⌄')),
-      h('span', { class: 'note-tools' }, h('button', { class: ['icon-btn', ui.searchOpen && 'on'], 'aria-label': 'Поиск', onclick: () => {
+      h('span', { class: 'note-tools' }, h('button', { class: 'icon-btn mic', 'aria-label': 'Голосовой ввод', onclick: () => openSmartInput({ listen: true }) }, h('span', { class: 'mic-ico small' })),
+      h('button', { class: ['icon-btn', ui.searchOpen && 'on'], 'aria-label': 'Поиск', onclick: () => {
         ui.searchOpen = !ui.searchOpen;
         if (!ui.searchOpen) ui.query = '';
         renderHome(root);
@@ -140,6 +174,7 @@ export function renderHome(root) {
     h('button', { class: 'act act-swap', onclick: () => openExchangeEditor({}), 'aria-label': 'Обмен' }, h('span', { class: 'act-sign' }, '⇄'), 'Обмен'));
 
   root.append(note, actions);
+  root.append(templatesRow());
   const ticket = todayTicket(store.state(), today);
   if (ticket) root.append(ticket);
 
@@ -191,4 +226,24 @@ export function renderHome(root) {
     }
   }
   renderList();
+}
+
+function templatesRow() {
+  const tpls = store.items('templates');
+  const row = h('div', { class: 'tpl-row', role: 'list' });
+  tpls.forEach((tp) => {
+    let timer = null, long = false;
+    const btn = h('button', {
+      class: ['tpl-chip', tp.type === 'income' && 'inc'], role: 'listitem',
+      onclick: () => { if (!long) useTemplate(tp); long = false; },
+      oncontextmenu: (e) => { e.preventDefault(); openTemplateEditor({ item: tp }); },
+    }, h('span', { class: 'tpl-ico' }, tp.icon || '•'), h('span', {}, tp.name), h('span', { class: 'mono tpl-sum' }, money(tp.amount, tp.currency)));
+    // долгое нажатие — редактировать
+    btn.addEventListener('touchstart', () => { long = false; timer = setTimeout(() => { long = true; openTemplateEditor({ item: tp }); }, 550); }, { passive: true });
+    ['touchend', 'touchmove', 'touchcancel'].forEach((ev) => btn.addEventListener(ev, () => clearTimeout(timer), { passive: true }));
+    row.append(btn);
+  });
+  row.append(h('button', { class: 'tpl-chip add', onclick: () => openTemplateEditor({}) }, '+', h('span', {}, tpls.length ? 'Шаблон' : 'Шаблон быстрой траты')));
+  row.append(h('button', { class: 'tpl-chip add', onclick: () => openSmartInput({}) }, '⌨', h('span', {}, 'Ввод текстом')));
+  return row;
 }

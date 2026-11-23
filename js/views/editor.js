@@ -127,18 +127,46 @@ function rateField(d, onChange) {
   };
 }
 
+// ---------- счёт ----------
+export function defaultAccount() {
+  const accs = store.activeAccounts();
+  if (!accs.length) return '';
+  const last = store.settings().lastAccount;
+  return accs.some((a) => a.id === last) ? last : accs[0].id;
+}
+
+/** Выбор счёта (показывается, только если счета созданы). */
+export function accountPicker(d, key = 'accountId', label = 'Счёт') {
+  const accs = store.activeAccounts();
+  const wrap = h('div', { class: 'editor' });
+  if (!accs.length) return wrap;
+  const row = h('div', { class: 'kind-row acc-row' });
+  const render = () => {
+    clear(row);
+    accs.forEach((a) => row.append(h('button', { type: 'button', class: ['chip', d[key] === a.id && 'active'], onclick: () => { d[key] = a.id; render(); } },
+      `${a.icon || store.ACCOUNT_KINDS[a.kind]?.icon || '▫'} ${a.name}`)));
+    row.append(h('button', { type: 'button', class: ['chip', !d[key] && 'active'], onclick: () => { d[key] = ''; render(); } }, 'Без счёта'));
+  };
+  render();
+  wrap.append(h('div', { class: 'section-label micro' }, label), row);
+  return wrap;
+}
+
 // ---------- трата / доход ----------
-export function openTxnEditor({ type = 'expense', txn = null, onDone, date = null } = {}) {
+export function openTxnEditor({ type = 'expense', txn = null, onDone, date = null, prefill = null } = {}) {
   const st = store.settings();
-  const startCur = txn?.currency || (st.currencies.includes(st.lastCurrency) ? st.lastCurrency : st.base);
+  const pf = prefill || {};
+  const startCur = txn?.currency || pf.currency || (st.currencies.includes(st.lastCurrency) ? st.lastCurrency : st.base);
   const d = {
-    type: txn?.type || type,
-    amountStr: txn ? String(txn.amount).replace('.', ',') : '',
+    type: txn?.type || pf.type || type,
+    amountStr: txn ? String(txn.amount).replace('.', ',') : pf.amount ? String(pf.amount).replace('.', ',') : '',
     currency: startCur,
     rate: txn?.rate || store.rate(startCur),
-    categoryId: txn?.categoryId || null,
-    note: txn?.note || '',
+    categoryId: txn?.categoryId || pf.categoryId || null,
+    note: txn?.note || pf.note || '',
     date: txn?.date || date || dayKey(),
+    accountId: txn ? txn.accountId || '' : defaultAccount(),
+    saveTpl: false,
   };
 
   const amountInput = h('input', {
@@ -210,7 +238,12 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     if (!(amount > 0)) { toast('Введите сумму'); amountInput.focus(); return; }
     if (!d.categoryId) { toast('Выберите ярлык'); return; }
     if (d.currency !== st.base && !(d.rate > 0)) { toast('Нет курса — введите его вручную'); return; }
-    await store.saveTxn({ ...(txn || {}), type: d.type, amount, currency: d.currency, rate: d.rate, categoryId: d.categoryId, note: d.note, date: d.date });
+    await store.saveTxn({ ...(txn || {}), type: d.type, amount, currency: d.currency, rate: d.rate, categoryId: d.categoryId, note: d.note, date: d.date, accountId: d.accountId });
+    if (d.accountId) st.lastAccount = d.accountId;
+    if (d.saveTpl) {
+      const c = store.category(d.categoryId);
+      store.upsert('templates', { name: d.note || c.name, icon: c.icon, type: d.type, amount, currency: d.currency, categoryId: d.categoryId, accountId: d.accountId, note: d.note });
+    }
     haptic();
     sheet.close();
     toast(txn ? 'Сохранено' : d.type === 'income' ? 'Доход добавлен' : 'Трата добавлена');
@@ -222,6 +255,7 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     h('div', { class: 'amount-wrap' }, amountInput, curBtn),
     preview,
     rf.el,
+    accountPicker(d),
     h('div', { class: 'section-label micro' }, 'Ярлык'),
     cats,
     h('div', { class: 'section-label micro' }, 'Описание'),
@@ -229,6 +263,9 @@ export function openTxnEditor({ type = 'expense', txn = null, onDone, date = nul
     sugg,
     h('div', { class: 'section-label micro' }, 'Дата'),
     dateRow(d),
+    !txn && h('label', { class: 'row set-row card tpl-toggle' },
+      h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Сохранить как шаблон'), h('span', { class: 'row-sub' }, 'Появится кнопкой на главном экране — добавлять в одно касание')),
+      h('input', { type: 'checkbox', class: 'switch', onchange: (e) => { d.saveTpl = e.target.checked; } })),
     h('button', { class: 'btn btn-primary save-btn', onclick: save }, txn ? 'Сохранить' : d.type === 'income' ? 'Добавить доход' : 'Добавить трату'),
     txn && h('button', {
       class: 'btn btn-plain danger', onclick: async () => {

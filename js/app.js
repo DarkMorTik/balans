@@ -10,6 +10,9 @@ import { renderSettings } from './views/settings.js';
 import { renderPortfolio } from './views/portfolio.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderPlans } from './views/plans.js';
+import { initTheme, applyTheme } from './theme.js';
+
+initTheme();
 
 const app = document.getElementById('app');
 const shield = document.getElementById('shield');
@@ -65,6 +68,7 @@ function renderShell() {
 
 function onUnlocked() {
   store.onUnlock();
+  applyTheme(store.settings().theme || 'auto');
   renderShell();
   store.refreshMarket().catch(() => {});
 }

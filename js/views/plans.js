@@ -6,16 +6,18 @@ import { segmented } from './editor.js';
 import { taskRow } from './calendar.js';
 import { openTaskEditor, openNoteEditor, NOTE_KINDS, openGoalEditor, goalSheet, goalRing } from './planner-sheets.js';
 import { toast } from '../sheet.js';
+import { renderFocus } from './focus.js';
 
 const ui = { seg: 'tasks', date: dayKey(), kind: 'all', q: '' };
 
 export function renderPlans(root) {
   clear(root);
   root.append(h('h1', { class: 'page-title' }, 'Дела'));
-  root.append(segmented([['tasks', 'Задачи'], ['notes', 'Заметки'], ['goals', 'Цели']], ui.seg, (v) => { ui.seg = v; renderPlans(root); }));
+  root.append(segmented([['tasks', 'Задачи'], ['focus', 'Фокус'], ['notes', 'Заметки'], ['goals', 'Цели']], ui.seg, (v) => { ui.seg = v; renderPlans(root); }));
   const body = h('div', { class: 'plans-body' });
   root.append(body);
   if (ui.seg === 'tasks') renderTasks(body, root);
+  else if (ui.seg === 'focus') renderFocus(body);
   else if (ui.seg === 'notes') renderNotes(body);
   else renderGoals(body);
 }
@@ -79,12 +81,17 @@ function renderTasks(body, root) {
   // рутина
   const routine = (st.tasks || []).filter((t) => t.repeat && t.repeat !== 'none');
   if (routine.length) {
-    body.append(h('div', { class: 'micro list-label' }, 'Рутина · серия выполнения'),
-      h('div', { class: 'card list' }, routine.map((t) => {
+    const weeks = routine.map((t) => P.habitWeek(t, today));
+    const due = weeks.reduce((a, w) => a + w.due, 0), done = weeks.reduce((a, w) => a + w.done, 0);
+    body.append(h('div', { class: 'micro list-label section-head' }, h('span', {}, 'Привычки · 7 дней'), h('span', { class: 'mono' }, due ? `${Math.round((done / due) * 100)}%` : '')),
+      h('div', { class: 'card list' }, routine.map((t, i) => {
         const streak = streakOf(t, today);
-        return h('button', { class: 'row', onclick: () => openTaskEditor({ item: t }) },
-          h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, t.title), h('span', { class: 'row-sub' }, P.REPEATS[t.repeat])),
-          h('span', { class: 'streak mono' }, streak ? `🔥 ${streak}` : '—'));
+        const w = weeks[i];
+        return h('button', { class: 'row habit', onclick: () => openTaskEditor({ item: t }) },
+          h('span', { class: 'row-main' },
+            h('span', { class: 'row-title' }, t.title),
+            h('span', { class: 'habit-dots' }, w.days.map((d) => h('i', { class: ['hd', d.done && 'done', d.due && !d.done && d.date < today && 'miss', !d.due && 'off', d.date === today && 'today'], title: d.date })))),
+          h('span', { class: 'row-end' }, h('span', { class: 'streak mono' }, streak ? `🔥 ${streak}` : '—'), h('span', { class: 'row-sub mono' }, `${Math.round(w.rate * 100)}%`)));
       })));
   }
 }

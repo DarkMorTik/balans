@@ -7,6 +7,7 @@ import { txnListSheet } from './home.js';
 import { guilloche } from '../guilloche.js';
 import * as P from '../planner.js';
 import { openDebtEditor, debtSheet } from './planner-sheets.js';
+import { openAccountEditor, accountSheet, openTransferSheet } from './money-sheets.js';
 
 const ui = { marketAll: false, marketQ: '' };
 
@@ -111,11 +112,13 @@ export function renderPortfolio(root) {
   const st = store.state();
   const s = st.settings;
   const b = s.base;
-  const hold = store.holdings();
+  const hasAccounts = (st.accounts || []).some((a) => !a.archived);
+  const hold = store.holdings(hasAccounts ? store.unassignedFilter() : null);
   const entries = Object.entries(hold).filter(([, e]) => Math.abs(e.qty) > 1e-9);
   const crypto = entries.filter(([c]) => isCrypto(c)).sort((x, y) => y[1].value - x[1].value);
   const fiat = entries.filter(([c]) => !isCrypto(c)).sort((x, y) => (x[0] === b ? -1 : y[0] === b ? 1 : y[1].value - x[1].value));
-  const total = entries.reduce((a, [, e]) => a + e.value, 0);
+  const accBal0 = store.accountBalances();
+  const total = entries.reduce((a, [, e]) => a + e.value, 0) + (st.accounts || []).filter((a) => !a.archived).reduce((a, x) => a + (accBal0[x.id]?.inBase || 0), 0);
   const cTotal = crypto.reduce((a, [, e]) => a + e.value, 0);
   const cCost = crypto.reduce((a, [, e]) => a + e.cost, 0);
   const cPnl = cTotal - cCost;
@@ -135,6 +138,24 @@ export function renderPortfolio(root) {
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'активы'), h('span', { class: 'mono' }, money(total + lent, b))),
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'долги'), h('span', { class: ['mono', owe > 0 && 'neg'] }, owe > 0 ? money(-owe, b) : '0')),
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'крипто'), h('span', { class: ['mono', cPnl >= 0 ? 'inc' : 'neg'] }, cCost > 0 ? `${pct(cPnl, cCost) >= 0 ? '+' : ''}${pct(cPnl, cCost).toFixed(1)}%` : money(cTotal, b))))));
+
+  // --- счета ---
+  const accs = (st.accounts || []).filter((a) => !a.archived);
+  const bals = store.accountBalances();
+  const accTotal = accs.reduce((a, x) => a + (bals[x.id]?.inBase || 0), 0);
+  root.append(h('div', { class: 'set-title micro section-head' }, h('span', {}, 'Счета и кошельки'), accs.length ? h('span', { class: 'mono' }, money(accTotal, b)) : null));
+  const accList = h('div', { class: 'acc-grid' });
+  accs.forEach((a) => {
+    const e = bals[a.id] || { balance: 0, inBase: 0 };
+    accList.append(h('button', { class: 'acc-card', onclick: () => accountSheet(a) },
+      h('span', { class: 'acc-top' }, h('span', { class: 'acc-ico' }, a.icon || '▫'), h('span', { class: 'micro' }, store.ACCOUNT_KINDS[a.kind]?.label || '')),
+      h('span', { class: 'acc-name' }, a.name),
+      h('span', { class: ['acc-bal', 'mono', e.balance < 0 && 'neg'] }, money(e.balance, a.currency)),
+      a.currency !== b ? h('span', { class: 'acc-sub mono' }, `≈ ${money(e.inBase, b)}`) : null));
+  });
+  accList.append(h('button', { class: 'acc-card add', onclick: () => openAccountEditor({}) }, h('span', { class: 'acc-plus' }, '+'), h('span', { class: 'acc-name' }, accs.length ? 'Счёт' : 'Добавить счёт'), h('span', { class: 'acc-sub' }, 'карта, наличные, биржа')));
+  root.append(accList);
+  if (accs.length >= 2) root.append(h('button', { class: 'btn btn-plain transfer-btn', onclick: () => openTransferSheet({}) }, '⇄ Перевод между счетами'));
 
   const status = h('span', { class: 'micro' }, s.livePrices ? `Курсы ${ago(s.pricesAt)}` : 'Онлайн-курсы выключены в настройках');
   const refreshBtn = h('button', { class: 'chip small', disabled: !s.livePrices, onclick: async () => {
@@ -172,10 +193,10 @@ export function renderPortfolio(root) {
       h('div', { class: 'muted small' }, 'Запишите покупку криптовалюты через «Купить / обменять» или укажите текущий остаток.')));
   }
   if (crypto.length) {
-    root.append(h('div', { class: 'set-title micro' }, 'Криптовалюта'), h('div', { class: 'card list' }, crypto.map(([c, e]) => assetRow(c, e, b))));
+    root.append(h('div', { class: 'set-title micro' }, hasAccounts ? 'Вне счетов · криптовалюта' : 'Криптовалюта'), h('div', { class: 'card list' }, crypto.map(([c, e]) => assetRow(c, e, b))));
   }
   if (fiat.length) {
-    root.append(h('div', { class: 'set-title micro' }, 'Валюты'), h('div', { class: 'card list' }, fiat.map(([c, e]) => assetRow(c, e, b))));
+    root.append(h('div', { class: 'set-title micro' }, hasAccounts ? 'Вне счетов · валюты' : 'Валюты'), h('div', { class: 'card list' }, fiat.map(([c, e]) => assetRow(c, e, b))));
   }
 
   // --- рынок ---

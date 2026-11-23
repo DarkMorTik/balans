@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэш оболочки приложения. Никаких внешних запросов.
-const VERSION = 'balans-v6';
+const VERSION = 'balans-v7';
 const SHELL = [
   './',
   'index.html',
@@ -16,6 +16,12 @@ const SHELL = [
   'js/market.js',
   'js/guilloche.js',
   'js/planner.js',
+  'js/nlp.js',
+  'js/csv.js',
+  'js/ics.js',
+  'js/sync.js',
+  'js/theme.js',
+  'js/report.js',
   'js/sheet.js',
   'js/views/lock.js',
   'js/views/home.js',
@@ -26,6 +32,10 @@ const SHELL = [
   'js/views/calendar.js',
   'js/views/plans.js',
   'js/views/planner-sheets.js',
+  'js/views/money-sheets.js',
+  'js/views/budget.js',
+  'js/views/import.js',
+  'js/views/focus.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',

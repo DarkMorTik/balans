@@ -344,8 +344,8 @@ export function insights(state, catOf, today = dayKey(), rateOf = null) {
   }
 
   // 10. Нагрузка обязательных платежей (регулярные + кредиты) относительно дохода
-  if (rateOf && ((state.recurring || []).length || (state.debts || []).length)) {
-    const rec = (state.recurring || []).filter((r) => r.active !== false)
+  if (rateOf && ((state.recurring || []).some((r) => r.type !== 'income') || (state.debts || []).length)) {
+    const rec = (state.recurring || []).filter((r) => r.active !== false && r.type !== 'income')
       .reduce((a, r) => a + (r.freq === 'weekly' ? r.amount * 4.345 : r.freq === 'yearly' ? r.amount / 12 : r.amount) * rateOf(r.currency), 0);
     const loans = (state.debts || []).filter((d) => d.kind !== 'lent' && d.payment > 0)
       .reduce((a, d) => a + d.payment * rateOf(d.currency), 0);

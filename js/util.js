@@ -2,6 +2,17 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// Как и h(), стандартный append() пропускает null/false: удобно для условных блоков
+// (иначе браузер вставил бы текст «null» или «false»).
+if (typeof Element !== 'undefined' && !Element.prototype.__balansAppend) {
+  const skip = (n) => n != null && n !== false && n !== true;
+  for (const proto of [Element.prototype, DocumentFragment.prototype]) {
+    const native = proto.append;
+    proto.append = function append(...nodes) { return native.apply(this, nodes.filter(skip)); };
+  }
+  Element.prototype.__balansAppend = true;
+}
+
 function applyProps(el, props) {
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;

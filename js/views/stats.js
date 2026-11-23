@@ -4,6 +4,8 @@ import * as store from '../store.js';
 import * as A from '../analytics.js';
 import * as charts from '../charts.js';
 import { txnListSheet } from './home.js';
+import { budgetCard } from './budget.js';
+import { openReport } from '../report.js';
 
 const ui = { mode: 'month', anchor: dayKey(), catType: 'expense', sel: -1 };
 
@@ -47,6 +49,7 @@ export function renderStats(root) {
     h('button', { class: 'period-label', onclick: () => { ui.anchor = today; rerender(); } }, p.label),
     h('button', { class: 'icon-btn', 'aria-label': 'Вперёд', disabled: isCurrent || p.start > today, onclick: () => { ui.anchor = A.shiftAnchor(ui.mode, ui.anchor, 1); ui.sel = -1; rerender(); } }, '›'));
   root.append(seg, nav);
+  if (st.txns.length) root.append(h('div', { class: 'stats-tools' }, h('button', { class: 'chip small', onclick: () => openReport(ui.mode === 'month' ? p.start : dayKey()) }, '⎙ Отчёт за месяц (PDF)')));
 
   if (!st.txns.length) {
     root.append(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '📊'), 'Здесь появится аналитика', h('div', { class: 'muted small' }, 'Добавьте несколько операций на главном экране.')));
@@ -63,6 +66,7 @@ export function renderStats(root) {
       h('span', { class: 'delta' }, savings != null ? `сбережено ${savings}%` : '')),
     h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, 'В день'), h('span', { class: 'kpi-val' }, fmt(round2(cur.exp / Math.max(1, days)))), h('span', { class: 'delta' }, 'средний расход'))));
 
+  if (ui.mode === 'month') root.append(budgetCard(st, p, txns));
   const grid = h('div', { class: 'stats-grid' });
   root.append(grid);
 

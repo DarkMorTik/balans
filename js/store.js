@@ -34,7 +34,7 @@ const DEFAULT_CATEGORIES = [
 ];
 const EXTRA_V2 = ['Крипто', 'Комиссии'];
 const EXTRA_V3 = ['Кредиты'];
-const PLANNER_KEYS = ['recurring', 'debts', 'tasks', 'notes', 'goals'];
+const PLANNER_KEYS = ['recurring', 'debts', 'tasks', 'notes', 'goals', 'accounts', 'templates'];
 
 export function initialState(base = 'RUB') {
   return {
@@ -57,7 +57,11 @@ export function initialState(base = 'RUB') {
     tasks: [],     // задачи по дням
     notes: [],     // заметки, планы, идеи
     goals: [],     // финансовые цели
-    schema: 3,
+    accounts: [],  // счета и кошельки
+    templates: [], // шаблоны быстрых операций
+    focus: {},     // минуты фокуса по дням
+    deleted: {},   // журнал удалений (для синхронизации между устройствами)
+    schema: 4,
   };
 }
 
@@ -73,7 +77,7 @@ function addCategories(st, names) {
 export function migrate() {
   const st = state();
   const v = st.schema || 1;
-  if (v >= 3) return;
+  if (v >= 4) return;
   if (v < 2) {
     addCategories(st, EXTRA_V2);
     st.settings.livePrices = true;
@@ -82,7 +86,10 @@ export function migrate() {
   }
   addCategories(st, EXTRA_V3);
   for (const k of PLANNER_KEYS) st[k] ||= [];
-  st.schema = 3;
+  st.focus ||= {};
+  st.deleted ||= {};
+  st.settings.theme ||= 'auto';
+  st.schema = 4;
   return vault.save();
 }
 
@@ -193,8 +200,12 @@ function buildTxn(data) {
     note: (data.note || '').trim().slice(0, 200),
     date: data.date || dayKey(),
     createdAt: data.createdAt || Date.now(),
+    updatedAt: Date.now(),
   };
+  if (data.accountId) t.accountId = data.accountId;
+  if (data.templateId) t.templateId = data.templateId;
   if (t.type === 'exchange') {
+    if (data.toAccountId) t.toAccountId = data.toAccountId;
     t.toAmount = roundAmt(data.toAmount, data.toCurrency);
     t.toCurrency = data.toCurrency;
     t.toRate = data.toCurrency === b ? 1 : Number(data.toRate) || 0;
@@ -203,7 +214,9 @@ function buildTxn(data) {
     else if (t.toCurrency === b && t.amount > 0) t.rate = round8(t.toAmount / t.amount);
     else if (t.rate > 0 && t.toAmount > 0) t.toRate = round8((t.amount * t.rate) / t.toAmount);
     else if (t.toRate > 0 && t.amount > 0) t.rate = round8((t.toAmount * t.toRate) / t.amount);
-    t.categoryId = t.categoryId || categoryByName(isCrypto(t.currency) || isCrypto(t.toCurrency) ? 'Крипто' : 'Обмен валюты')?.id || '';
+    if (t.currency !== t.toCurrency || !t.accountId) {
+      t.categoryId = t.categoryId || categoryByName(isCrypto(t.currency) || isCrypto(t.toCurrency) ? 'Крипто' : 'Обмен валюты')?.id || '';
+    }
   }
   return t;
 }
@@ -263,7 +276,7 @@ export function adjustBalance(cur, actual, rateValue) {
  * Остатки по валютам и средняя себестоимость (в основной валюте).
  * { CUR: { qty, cost, value, pnl } }
  */
-export function holdings() {
+export function holdings(filter = null) {
   const st = state();
   const out = {};
   const get = (c) => (out[c] ||= { qty: 0, cost: 0 });
@@ -276,7 +289,7 @@ export function holdings() {
       e.qty += q;
     }
   };
-  const txns = [...st.txns].sort((a, b) => (a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1));
+  const txns = (filter ? st.txns.filter(filter) : [...st.txns]).sort((a, b) => (a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1));
   const r = (c, rr) => (c === st.settings.base ? 1 : rr || 0);
   for (const t of txns) {
     const sign = t.type === 'expense' ? -1 : 1;
@@ -297,15 +310,23 @@ export function holdings() {
   return out;
 }
 
+function tomb(id) {
+  const st = state();
+  st.deleted ||= {};
+  st.deleted[id] = Date.now();
+}
+const touch = (x) => { if (x) x.updatedAt = Date.now(); return x; };
+
 export function deleteTxn(id) {
   const st = state();
   st.txns = st.txns.filter((t) => t.id !== id);
+  tomb(id);
   // снять отметку «оплачено» у регулярного платежа и убрать платёж по долгу, связанные с этой операцией
   for (const r of st.recurring || []) {
-    for (const [d, tid] of Object.entries(r.paid || {})) if (tid === id) delete r.paid[d];
+    for (const [d, tid] of Object.entries(r.paid || {})) if (tid === id) { delete r.paid[d]; touch(r); }
   }
   for (const d of st.debts || []) {
-    if (d.payments?.some((p) => p.txnId === id)) d.payments = d.payments.filter((p) => p.txnId !== id);
+    if (d.payments?.some((p) => p.txnId === id)) { d.payments = d.payments.filter((p) => p.txnId !== id); touch(d); }
   }
   return changed();
 }
@@ -317,7 +338,7 @@ export function sortedTxns() {
 // ---------- ярлыки ----------
 export function saveCategory(cat) {
   const st = state();
-  const c = { id: cat.id || uid(), name: cat.name.trim().slice(0, 30), icon: cat.icon || '•', type: cat.type, color: cat.color, limit: Number(cat.limit) || 0 };
+  const c = { id: cat.id || uid(), name: cat.name.trim().slice(0, 30), icon: cat.icon || '•', type: cat.type, color: cat.color, limit: Number(cat.limit) || 0, updatedAt: Date.now() };
   const i = st.categories.findIndex((x) => x.id === c.id);
   if (i >= 0) st.categories[i] = c;
   else st.categories.push(c);
@@ -334,6 +355,7 @@ export function deleteCategory(id) {
   }
   st.txns.forEach((t) => { if (t.categoryId === id) t.categoryId = other.id; });
   st.categories = st.categories.filter((c) => c.id !== id);
+  tomb(id);
   return changed();
 }
 
@@ -420,6 +442,8 @@ export function validateState(s) {
   }
   s.dismissed ||= [];
   for (const k of PLANNER_KEYS) s[k] ||= [];
+  s.focus ||= {};
+  s.deleted ||= {};
   return s;
 }
 
@@ -437,6 +461,7 @@ export function upsert(coll, item) {
 export function removeItem(coll, id) {
   const st = state();
   st[coll] = (st[coll] || []).filter((x) => x.id !== id);
+  tomb(id);
   return changed();
 }
 export const items = (coll) => state()[coll] || [];
@@ -448,12 +473,14 @@ export function payRecurring(r, date) {
   const st = state();
   const rr = findItem('recurring', r.id);
   if (!rr || rr.paid?.[date]) return Promise.resolve();
+  const income = rr.type === 'income';
   const t = buildTxn({
-    type: 'expense', amount: rr.amount, currency: rr.currency, rate: rate(rr.currency),
-    categoryId: rr.categoryId || categoryByName('Подписки')?.id, note: rr.name, date,
+    type: income ? 'income' : 'expense', amount: rr.amount, currency: rr.currency, rate: rate(rr.currency),
+    categoryId: rr.categoryId || categoryByName(income ? 'Зарплата' : 'Подписки')?.id, note: rr.name, date, accountId: rr.accountId,
   });
   st.txns.push(t);
   rr.paid = { ...(rr.paid || {}), [date]: t.id };
+  touch(rr);
   return changed();
 }
 export function unpayRecurring(r, date) {
@@ -462,7 +489,9 @@ export function unpayRecurring(r, date) {
   const id = rr?.paid?.[date];
   if (!id) return Promise.resolve();
   st.txns = st.txns.filter((t) => t.id !== id);
+  tomb(id);
   delete rr.paid[date];
+  touch(rr);
   return changed();
 }
 
@@ -477,12 +506,13 @@ export function payDebt(d, amount, date = dayKey(), record = true) {
     const t = buildTxn({
       type: dd.kind === 'lent' ? 'income' : 'expense', amount, currency: dd.currency, rate: rate(dd.currency),
       categoryId: dd.kind === 'lent' ? categoryByName('Другое')?.id : categoryByName('Кредиты')?.id || categoryByName('Другое')?.id,
-      note: `${dd.kind === 'lent' ? 'Возврат долга' : 'Платёж'}: ${dd.name}`, date,
+      note: `${dd.kind === 'lent' ? 'Возврат долга' : 'Платёж'}: ${dd.name}`, date, accountId: dd.accountId,
     });
     st.txns.push(t);
     txnId = t.id;
   }
   dd.payments = [...(dd.payments || []), { id: uid(), date, amount: roundAmt(amount, dd.currency), txnId }];
+  touch(dd);
   return changed();
 }
 export function removeDebtPayment(d, pid) {
@@ -490,8 +520,9 @@ export function removeDebtPayment(d, pid) {
   const dd = findItem('debts', d.id);
   const p = dd?.payments?.find((x) => x.id === pid);
   if (!p) return Promise.resolve();
-  if (p.txnId) st.txns = st.txns.filter((t) => t.id !== p.txnId);
+  if (p.txnId) { st.txns = st.txns.filter((t) => t.id !== p.txnId); tomb(p.txnId); }
   dd.payments = dd.payments.filter((x) => x.id !== pid);
+  touch(dd);
   return changed();
 }
 
@@ -505,6 +536,7 @@ export function toggleTask(t, date) {
     if (set.has(date)) set.delete(date); else set.add(date);
     tt.doneDates = [...set].sort().slice(-400);
   }
+  touch(tt);
   return changed();
 }
 
@@ -513,5 +545,110 @@ export function contributeGoal(g, amount, date = dayKey()) {
   const gg = findItem('goals', g.id);
   if (!gg || !amount) return Promise.resolve();
   gg.contributions = [...(gg.contributions || []), { id: uid(), date, amount: round2(amount) }];
+  touch(gg);
   return changed();
+}
+
+// ---------- счета и кошельки ----------
+export const ACCOUNT_KINDS = {
+  card: { label: 'Карта', icon: '💳' },
+  cash: { label: 'Наличные', icon: '💵' },
+  bank: { label: 'Счёт в банке', icon: '🏦' },
+  deposit: { label: 'Вклад', icon: '🐷' },
+  exchange: { label: 'Биржа / кошелёк', icon: '◈' },
+  other: { label: 'Другое', icon: '▫' },
+};
+
+/** Балансы счетов в их валютах. { id: { balance, inBase } } */
+export function accountBalances() {
+  const st = state();
+  const out = {};
+  const accs = st.accounts || [];
+  for (const a of accs) out[a.id] = { balance: a.initial || 0 };
+  const add = (id, cur, v) => {
+    const e = out[id];
+    if (!e) return;
+    const acc = accs.find((x) => x.id === id);
+    // сумма в другой валюте пересчитывается в валюту счёта по текущему курсу
+    e.balance += cur === acc.currency ? v : v * pairRate(cur, acc.currency);
+  };
+  for (const t of st.txns) {
+    if (t.type === 'income' || t.type === 'adjust') add(t.accountId, t.currency, t.amount);
+    else if (t.type === 'expense') add(t.accountId, t.currency, -t.amount);
+    else if (t.type === 'exchange') {
+      add(t.accountId, t.currency, -t.amount);
+      add(t.toAccountId, t.toCurrency, t.toAmount);
+    }
+  }
+  for (const a of accs) {
+    const e = out[a.id];
+    e.balance = roundAmt(e.balance, a.currency);
+    e.inBase = round2(e.balance * rate(a.currency));
+  }
+  return out;
+}
+
+export const activeAccounts = () => (state().accounts || []).filter((a) => !a.archived);
+export const account = (id) => (state().accounts || []).find((a) => a.id === id);
+
+/** Перевод между счетами (в т.ч. с конвертацией валют). */
+export function saveTransfer({ id, fromId, toId, amount, toAmount, date, note }) {
+  const from = account(fromId), to = account(toId);
+  if (!from || !to) return Promise.reject(new Error('Выберите счета'));
+  return saveExchange({
+    id, amount, currency: from.currency, rate: rate(from.currency), accountId: from.id,
+    toAmount: from.currency === to.currency ? amount : toAmount, toCurrency: to.currency, toRate: rate(to.currency), toAccountId: to.id,
+    note: note || `${from.name} → ${to.name}`, date, categoryId: '',
+  });
+}
+
+/** Привести баланс счёта к фактическому (корректировка, не доход и не расход). */
+export function setAccountBalance(acc, actual) {
+  const cur = accountBalances()[acc.id]?.balance || 0;
+  const diff = roundAmt(actual - cur, acc.currency);
+  if (!diff) return Promise.resolve();
+  state().txns.push(buildTxn({ type: 'adjust', amount: diff, currency: acc.currency, rate: rate(acc.currency), accountId: acc.id, note: `Остаток: ${acc.name}` }));
+  return changed();
+}
+
+// ---------- шаблоны ----------
+export function applyTemplate(tpl, date = dayKey()) {
+  const t = buildTxn({
+    type: tpl.type, amount: tpl.amount, currency: tpl.currency, rate: rate(tpl.currency),
+    categoryId: tpl.categoryId, note: tpl.note || tpl.name, date, accountId: tpl.accountId, templateId: tpl.id,
+  });
+  state().txns.push(t);
+  return changed().then(() => t);
+}
+
+// ---------- массовое добавление (импорт выписки) ----------
+export function bulkAddTxns(list) {
+  const st = state();
+  const created = list.map((d) => buildTxn(d));
+  st.txns.push(...created);
+  created.forEach((t) => { if (!st.settings.currencies.includes(t.currency)) st.settings.currencies.push(t.currency); });
+  return changed().then(() => created.length);
+}
+
+// ---------- фокус ----------
+export function logFocus(minutes, date = dayKey()) {
+  const st = state();
+  st.focus ||= {};
+  st.focus[date] = (st.focus[date] || 0) + minutes;
+  return changed();
+}
+
+// ---------- синхронизация ----------
+export function applyMerged(merged) {
+  return vault.replaceState(merged).then(() => listeners.forEach((fn) => fn()));
+}
+
+/**
+ * Фильтр «деньги вне счетов»: операции без счёта, добавленные после создания первого счёта.
+ * Более ранняя история уже отражена в начальных остатках счетов.
+ */
+export function unassignedFilter() {
+  const accs = state().accounts || [];
+  const first = accs.length ? Math.min(...accs.map((a) => a.createdAt || 0)) : 0;
+  return (t) => !t.accountId && !t.toAccountId && (t.createdAt || 0) >= first;
 }

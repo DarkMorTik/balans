@@ -108,13 +108,19 @@ export function confirmSheet(text, { ok = 'Удалить', danger = true, detai
 }
 
 let toastEl = null, toastTimer = null;
-export function toast(msg) {
+/** Уведомление. action — необязательная кнопка, например { label: 'Отменить', run }. */
+export function toast(msg, action = null) {
   if (!toastEl) {
     toastEl = h('div', { class: 'toast', role: 'status' });
     document.body.append(toastEl);
   }
-  toastEl.textContent = msg;
+  while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
+  toastEl.append(document.createTextNode(msg));
+  toastEl.classList.toggle('has-action', !!action);
+  if (action) {
+    toastEl.append(h('button', { class: 'toast-act', onclick: () => { toastEl.classList.remove('show'); action.run(); } }, action.label));
+  }
   toastEl.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), action ? 4500 : 2200);
 }

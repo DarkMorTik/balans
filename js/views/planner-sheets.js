@@ -3,7 +3,7 @@ import { h, clear, parseAmount, dayKey, addDays, money, dayTitle, shortDate, isC
 import * as store from '../store.js';
 import * as P from '../planner.js';
 import { openSheet, confirmSheet, toast } from '../sheet.js';
-import { segmented, pickCurrency } from './editor.js';
+import { segmented, pickCurrency, accountPicker, defaultAccount } from './editor.js';
 
 const label = (t) => h('div', { class: 'section-label micro' }, t);
 
@@ -37,11 +37,12 @@ function deleteButton(text, question, fn) {
 }
 
 // ---------- регулярный платёж ----------
-export function openRecurringEditor({ item = null, date = null } = {}) {
+export function openRecurringEditor({ item = null, date = null, type = 'expense' } = {}) {
   const base = store.base();
   const d = {
+    type: item?.type || type, accountId: item ? item.accountId || '' : defaultAccount(),
     name: item?.name || '', amountStr: item ? String(item.amount).replace('.', ',') : '', currency: item?.currency || base,
-    categoryId: item?.categoryId || store.categoryByName('Подписки')?.id, freq: item?.freq || 'monthly',
+    categoryId: item?.categoryId || store.categoryByName((item?.type || type) === 'income' ? 'Зарплата' : 'Подписки')?.id, freq: item?.freq || 'monthly',
     day: item?.day || Number((date || dayKey()).slice(8)), weekday: item?.weekday ?? 0, month: item?.month || Number((date || dayKey()).slice(5, 7)),
     start: item?.start || (date || dayKey()).slice(0, 8) + '01', active: item?.active !== false, icon: item?.icon || '🔁',
   };
@@ -63,7 +64,7 @@ export function openRecurringEditor({ item = null, date = null } = {}) {
   const cats = h('div', { class: 'cat-grid' });
   function renderCats() {
     clear(cats);
-    store.categoriesFor('expense').forEach((c) => cats.append(h('button', {
+    store.categoriesFor(d.type).forEach((c) => cats.append(h('button', {
       type: 'button', class: ['cat-chip', c.id === d.categoryId && 'active'], style: { '--c': c.color },
       onclick: () => { d.categoryId = c.id; d.icon = c.icon; renderCats(); },
     }, h('span', { class: 'cat-ico' }, c.icon), h('span', { class: 'cat-name' }, c.name))));
@@ -72,18 +73,25 @@ export function openRecurringEditor({ item = null, date = null } = {}) {
     const amount = parseAmount(d.amountStr);
     if (!d.name.trim()) return toast('Введите название');
     if (!(amount > 0)) return toast('Введите сумму');
-    store.upsert('recurring', { ...(item || {}), name: d.name.trim(), amount, currency: d.currency, categoryId: d.categoryId, icon: d.icon,
+    store.upsert('recurring', { ...(item || {}), type: d.type, accountId: d.accountId, name: d.name.trim(), amount, currency: d.currency, categoryId: d.categoryId, icon: d.icon,
       freq: d.freq, day: d.day, weekday: d.weekday, month: d.month, start: d.start, active: d.active, paid: item?.paid || {} });
     sh.close();
-    toast(item ? 'Сохранено' : 'Платёж добавлен');
+    toast(item ? 'Сохранено' : d.type === 'income' ? 'Доход добавлен в календарь' : 'Платёж добавлен');
   }
   const sh = openSheet({
-    title: item ? 'Регулярный платёж' : 'Новый регулярный платёж',
+    title: item ? (item.type === 'income' ? 'Регулярный доход' : 'Регулярный платёж') : 'Регулярная операция',
     right: h('button', { class: 'link strong', onclick: save }, 'Готово'),
     content: h('div', { class: 'editor' },
+      segmented([['expense', 'Списание'], ['income', 'Доход']], d.type, (v) => {
+        d.type = v;
+        const c = store.categoryByName(v === 'income' ? 'Зарплата' : 'Подписки');
+        d.categoryId = c?.id; d.icon = c?.icon || d.icon;
+        renderCats();
+      }),
       label('Название'),
-      h('input', { class: 'field', placeholder: 'Например, «Аренда квартиры» или «Claude Pro»', maxlength: '60', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
+      h('input', { class: 'field', placeholder: 'Например, «Аренда», «Claude Pro» или «Зарплата»', maxlength: '60', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
       amountRow(d),
+      accountPicker(d),
       label('Как часто'),
       segmented([['monthly', 'Ежемесячно'], ['weekly', 'Еженедельно'], ['yearly', 'Ежегодно']], d.freq, (v) => { d.freq = v; renderWhen(); }),
       when,
@@ -93,7 +101,7 @@ export function openRecurringEditor({ item = null, date = null } = {}) {
       h('input', { type: 'date', class: 'field', value: d.start, onchange: (e) => { d.start = e.target.value || d.start; } }),
       h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Активен'), h('span', { class: 'row-sub' }, 'Выключите, чтобы приостановить без удаления')),
         h('input', { type: 'checkbox', class: 'switch', checked: d.active, onchange: (e) => { d.active = e.target.checked; } })),
-      h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить платёж'),
+      h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить'),
       item && deleteButton('Удалить платёж', `Удалить «${item.name}»?`, async () => { await store.removeItem('recurring', item.id); sh.close(); toast('Удалено'); })),
   });
   renderWhen();
@@ -106,7 +114,7 @@ export function openDebtEditor({ item = null } = {}) {
   const d = {
     kind: item?.kind || 'loan', name: item?.name || '', amountStr: item ? String(item.principal).replace('.', ',') : '', currency: item?.currency || base,
     remainingStr: item ? '' : '', paymentStr: item?.payment ? String(item.payment).replace('.', ',') : '', day: item?.day || 0,
-    rate: item?.rate || '', start: item?.start || dayKey(), note: item?.note || '',
+    rate: item?.rate || '', start: item?.start || dayKey(), note: item?.note || '', accountId: item ? item.accountId || '' : defaultAccount(),
   };
   const kinds = h('div', { class: 'kind-row' });
   function renderKinds() {
@@ -126,7 +134,7 @@ export function openDebtEditor({ item = null } = {}) {
     const remaining = parseAmount(d.remainingStr);
     const out = {
       ...(item || {}), kind: d.kind, name: d.name.trim(), principal, currency: d.currency,
-      payment: parseAmount(d.paymentStr) || 0, day: d.day, rate: parseAmount(String(d.rate)) || 0, start: d.start, note: d.note.trim(),
+      payment: parseAmount(d.paymentStr) || 0, day: d.day, rate: parseAmount(String(d.rate)) || 0, start: d.start, note: d.note.trim(), accountId: d.accountId,
       payments: item?.payments || [],
     };
     out.initialPaid = !item && remaining >= 0 && remaining < principal ? principal - remaining : item?.initialPaid || 0;
@@ -151,6 +159,7 @@ export function openDebtEditor({ item = null } = {}) {
       dayWrap,
       label('Ставка, % годовых (для справки)'),
       h('input', { class: 'field mono', inputmode: 'decimal', placeholder: '0', value: d.rate ? String(d.rate) : '', oninput: (e) => { d.rate = e.target.value; } }),
+      accountPicker(d, 'accountId', 'Счёт для платежей'),
       label('Комментарий'),
       h('input', { class: 'field', placeholder: 'Банк, договор, условия', maxlength: '200', value: d.note, oninput: (e) => { d.note = e.target.value; } }),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить'),

@@ -113,7 +113,7 @@ export function plannedEvents(state, from, to, today = dayKey()) {
     for (const date of occurrences(r, from, to)) {
       const paid = !!r.paid?.[date];
       if (!paid && date < born) continue; // до создания платежа долгов нет
-      out.push({ date, kind: 'recurring', ref: r, title: r.name, amount: r.amount, currency: r.currency, icon: r.icon || '🔁', paid, overdue: !paid && date < today });
+      out.push({ date, kind: 'recurring', type: r.type || 'expense', ref: r, title: r.name, amount: r.amount, currency: r.currency, icon: r.icon || (r.type === 'income' ? '💼' : '🔁'), paid, overdue: !paid && date < today });
     }
   }
   for (const d of state.debts || []) {
@@ -121,7 +121,7 @@ export function plannedEvents(state, from, to, today = dayKey()) {
     const born = createdDay(d);
     for (const e of debtEvents(d, from, to, today)) {
       if (!e.paid && e.date < born) continue;
-      out.push({ date: e.date, kind: 'debt', ref: d, title: d.name, amount: Math.min(d.payment, debtRemaining(d) || d.payment), currency: d.currency, icon: DEBT_KINDS[d.kind]?.icon || '🏦', paid: e.paid, overdue: !e.paid && e.date < today });
+      out.push({ date: e.date, kind: 'debt', type: 'expense', ref: d, title: d.name, amount: Math.min(d.payment, debtRemaining(d) || d.payment), currency: d.currency, icon: DEBT_KINDS[d.kind]?.icon || '🏦', paid: e.paid, overdue: !e.paid && e.date < today });
     }
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.title.localeCompare(b.title)));
@@ -164,4 +164,41 @@ export function goalStats(g, today = dayKey()) {
     perMonth = daysLeft > 0 ? left / months : left;
   }
   return { saved: round2(saved), left: round2(left), progress, perMonth: perMonth != null ? round2(perMonth) : null, daysLeft };
+}
+
+// ---------- прогноз до зарплаты ----------
+/**
+ * Ближайший ожидаемый доход и сколько можно тратить в день до него.
+ * available — сколько денег есть сейчас (в основной валюте); rateOf(cur) — курс к основной.
+ * → { date, days, amount, plannedBefore, free, perDay, title } | null
+ */
+export function paydayForecast(state, available, rateOf, today = dayKey()) {
+  const horizon = addDays(today, 62);
+  const events = plannedEvents(state, today, horizon, today).filter((e) => !e.paid);
+  const income = events.find((e) => e.type === 'income' && e.date >= today);
+  if (!income) return null;
+  const plannedBefore = events
+    .filter((e) => e.type !== 'income' && e.date < income.date)
+    .reduce((a, e) => a + e.amount * rateOf(e.currency), 0);
+  const days = Math.max(1, diffDays(today, income.date));
+  const free = available - plannedBefore;
+  return {
+    date: income.date, days, title: income.title,
+    amount: round2(income.amount * rateOf(income.currency)),
+    plannedBefore: round2(plannedBefore), free: round2(free), perDay: round2(Math.max(0, free) / days),
+  };
+}
+
+// ---------- статистика привычек ----------
+/** Последние n дней по повторяющейся задаче: [{ date, due, done }] и процент выполнения. */
+export function habitWeek(t, today = dayKey(), n = 7) {
+  const days = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = addDays(today, -i);
+    const due = taskOn(t, d);
+    days.push({ date: d, due, done: due && isDone(t, d) });
+  }
+  const due = days.filter((x) => x.due).length;
+  const done = days.filter((x) => x.done).length;
+  return { days, rate: due ? done / due : 0, done, due };
 }
