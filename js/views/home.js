@@ -24,7 +24,7 @@ function todayTicket(st, today) {
   const over = P.overdueTasks(st, today);
   const cash = availableNow();
   const pay = cash == null ? null : P.paydayForecast(st, cash, store.rate, today);
-  const maturing = P.investEvents(st, addDays(today, -60), addDays(today, 8), today);
+  const maturing = [...P.investEvents(st, addDays(today, -60), addDays(today, 8), today), ...P.unlockEvents(st, addDays(today, -60), addDays(today, 8), today)];
   if (!events.length && !tasks.length && !over.length && !pay && !maturing.length) return null;
   const done = tasks.filter((t) => P.isDone(t, today)).length;
   const base = st.settings.base;
@@ -43,7 +43,7 @@ function todayTicket(st, today) {
     if (events.length || tasks.length || over.length) t.append(h('div', { class: 'perf' }));
   }
   if (maturing.length) {
-    t.append(h('div', { class: 'ticket-label micro' }, 'Вложения заканчиваются'), h('div', { class: 'list' }, maturing.slice(0, 3).map((e) => eventRow(e, { showDate: true }))));
+    t.append(h('div', { class: 'ticket-label micro' }, 'Скоро станут доступны'), h('div', { class: 'list' }, maturing.slice(0, 3).map((e) => eventRow(e, { showDate: true }))));
     if (events.length || tasks.length || over.length) t.append(h('div', { class: 'perf' }));
   }
   if (events.length) {

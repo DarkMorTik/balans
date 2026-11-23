@@ -7,6 +7,7 @@ import { txnRow } from './home.js';
 import { openRecurringEditor, openTaskEditor, debtSheet } from './planner-sheets.js';
 import { buildICS, rruleFor } from '../ics.js';
 import { investSheet } from './invest.js';
+import { accountSheet } from './money-sheets.js';
 import { confirmSheet, toast } from '../sheet.js';
 
 const ui = { month: monthStart(dayKey()), sel: dayKey() };
@@ -20,14 +21,15 @@ export function eventRow(e, { showDate = false } = {}) {
       ev.stopPropagation();
       if (e.kind === 'recurring') store.payRecurring(e.ref, e.date);
       else if (e.kind === 'invest') investSheet(e.ref);
+      else if (e.kind === 'unlock') accountSheet(e.ref);
       else debtSheet(e.ref);
-    } }, e.kind === 'invest' ? 'Забрать' : inc ? 'Получено' : 'Оплатить');
+    } }, e.kind === 'invest' ? 'Забрать' : e.kind === 'unlock' ? 'Проверить' : inc ? 'Получено' : 'Оплатить');
   const when = e.date === today ? 'сегодня' : e.date === addDays(today, 1) ? 'завтра' : shortDate(e.date);
-  return h('div', { class: ['row', 'event', e.paid && 'is-paid'], role: 'button', tabindex: '0', onclick: () => (e.kind === 'recurring' ? openRecurringEditor({ item: e.ref }) : e.kind === 'invest' ? investSheet(e.ref) : debtSheet(e.ref)) },
+  return h('div', { class: ['row', 'event', e.paid && 'is-paid'], role: 'button', tabindex: '0', onclick: () => (e.kind === 'recurring' ? openRecurringEditor({ item: e.ref }) : e.kind === 'invest' ? investSheet(e.ref) : e.kind === 'unlock' ? accountSheet(e.ref) : debtSheet(e.ref)) },
     h('span', { class: 'cat-ico swap' }, e.icon),
     h('span', { class: 'row-main' },
       h('span', { class: 'row-title' }, e.title),
-      h('span', { class: ['row-sub', e.overdue && !inc && 'neg'] }, e.kind === 'invest' ? `${e.overdue ? 'срок окончен' : 'окончание'} · ${when} · тело ${money(e.principal, e.currency)}` : e.overdue ? `${inc ? 'ожидался' : 'просрочено'} · ${when}` : showDate ? `${when} · ${inc ? 'доход' : e.kind === 'debt' ? 'кредит' : 'регулярный'}` : inc ? 'регулярный доход' : e.kind === 'debt' ? 'обязательство' : 'регулярный платёж')),
+      h('span', { class: ['row-sub', e.overdue && !inc && 'neg'] }, e.kind === 'invest' ? `${e.overdue ? 'срок окончен' : 'окончание'} · ${when} · тело ${money(e.principal, e.currency)}` : e.kind === 'unlock' ? `${e.overdue ? 'срок наступил' : 'станет доступно'} · ${when}` : e.overdue ? `${inc ? 'ожидался' : 'просрочено'} · ${when}` : showDate ? `${when} · ${inc ? 'доход' : e.kind === 'debt' ? 'кредит' : 'регулярный'}` : inc ? 'регулярный доход' : e.kind === 'debt' ? 'обязательство' : 'регулярный платёж')),
     h('span', { class: 'row-end' }, h('span', { class: ['amount', inc && 'inc'] }, money(inc ? e.amount : -e.amount, e.currency, { sign: inc })), btn));
 }
 
@@ -148,7 +150,7 @@ export function renderCalendar(root) {
   list.append(h('button', { class: 'row', onclick: () => openRecurringEditor({ date: ui.sel >= today ? ui.sel : today, type: 'income' }) },
     h('span', { class: 'cat-ico add-ico inc' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Регулярный доход'), h('span', { class: 'row-sub' }, 'Зарплата, аванс, аренда от жильцов'))));
   root.append(list);
-  if (rec.length || (st.debts || []).some((d) => d.payment > 0 && d.day) || (st.invest || []).some((v) => !v.closed)) {
+  if (rec.length || (st.debts || []).some((d) => d.payment > 0 && d.day) || (st.invest || []).some((v) => !v.closed) || (st.accounts || []).some((a) => a.locked && a.unlockDate)) {
     root.append(h('button', { class: 'btn btn-plain ics-btn', onclick: exportToCalendar }, '📅 Напоминания в Календарь iPhone'));
   }
 }
@@ -187,6 +189,10 @@ async function exportToCalendar() {
     if (v.closed || v.end < today) continue;
     const s = P.investStats(v, today);
     events.push({ uid: `inv-${v.id}`, title: `◈ Окончание: ${v.name} · +${money(s.expected, v.currency)}`, description: `Тело ${money(v.amount, v.currency)}. Заберите доход в приложении.`, start: v.end, alarms: ['-P1DT15H', '-PT15H', 'PT9H'] });
+  }
+  for (const a of st.accounts || []) {
+    if (!a.locked || a.archived || !a.unlockDate || a.unlockDate < today) continue;
+    events.push({ uid: `unlock-${a.id}`, title: `🔓 Станет доступно: ${a.name} · ${money(a.balance || 0, a.currency)}`, description: a.lockReason || 'Недоступные деньги', start: a.unlockDate, alarms: ['-P6DT15H', '-PT15H', 'PT9H'] });
   }
   if (!events.length) return toast('Нет активных платежей');
   const file = new File([buildICS(events)], 'balans-platezhi.ics', { type: 'text/calendar' });

@@ -566,8 +566,13 @@ export const ACCOUNT_KINDS = {
   bank: { label: 'Счёт в банке', icon: '🏦' },
   deposit: { label: 'Вклад', icon: '🐷' },
   exchange: { label: 'Биржа / кошелёк', icon: '◈' },
+  pledge: { label: 'Залог', icon: '🔒' },
+  frozen: { label: 'Заблокировано', icon: '⛔' },
   other: { label: 'Другое', icon: '▫' },
 };
+/** Виды счетов, которые по умолчанию недоступны «здесь и сейчас». */
+export const LOCKED_KINDS = new Set(['pledge', 'frozen']);
+export const isLocked = (a) => !!a?.locked;
 const LIQUID = new Set(['card', 'cash', 'bank']);
 
 /** { id: { balance, inBase } } */
@@ -583,7 +588,7 @@ export function accountBalances() {
 export const activeAccounts = () => (state().accounts || []).filter((a) => !a.archived);
 export const account = (id) => (state().accounts || []).find((a) => a.id === id);
 /** Деньги «на руках» для прогноза до зарплаты: карты, наличные, банковские счета (не крипта). */
-export const liquidAccounts = () => activeAccounts().filter((a) => LIQUID.has(a.kind) && !isCrypto(a.currency));
+export const liquidAccounts = () => activeAccounts().filter((a) => LIQUID.has(a.kind) && !isCrypto(a.currency) && !a.locked);
 
 function logBalance(a, note) {
   a.history = [...(a.history || []), { date: dayKey(), balance: a.balance, note: note || '' }].slice(-60);
@@ -632,14 +637,25 @@ export function transferBetween({ fromId, toId, amount, toAmount }) {
 }
 
 // ---------- капитал ----------
-/** Чистый капитал: счета + вложения (с накопленным доходом) + «мне должны» − долги. */
+/**
+ * Чистый капитал: доступные счета + недоступные (залоги, блокировки — если учитываются)
+ * + вложения (с накопленным доходом) + «мне должны» − долги.
+ */
 export function capitalNow(today = dayKey()) {
   const st = state();
-  const accounts = activeAccounts().reduce((a, x) => a + (x.balance || 0) * rate(x.currency), 0);
+  const inBase = (x) => (x.balance || 0) * rate(x.currency);
+  const accounts = activeAccounts().filter((a) => !a.locked).reduce((a, x) => a + inBase(x), 0);
+  const lockedAll = activeAccounts().filter((a) => a.locked);
+  const locked = lockedAll.filter((a) => a.countInCapital !== false).reduce((a, x) => a + inBase(x), 0);
+  const lockedExcluded = lockedAll.filter((a) => a.countInCapital === false).reduce((a, x) => a + inBase(x), 0);
   const invest = (st.invest || []).filter((v) => !v.closed).reduce((a, v) => a + (v.amount + P.investStats(v, today).accrued) * rate(v.currency), 0);
   const lent = (st.debts || []).filter((d) => d.kind === 'lent').reduce((a, d) => a + P.debtRemaining(d) * rate(d.currency), 0);
   const owe = (st.debts || []).filter((d) => d.kind !== 'lent').reduce((a, d) => a + P.debtRemaining(d) * rate(d.currency), 0);
-  return { accounts: round2(accounts), invest: round2(invest), lent: round2(lent), owe: round2(owe), net: round2(accounts + invest + lent - owe) };
+  return {
+    accounts: round2(accounts), locked: round2(locked), lockedExcluded: round2(lockedExcluded),
+    invest: round2(invest), lent: round2(lent), owe: round2(owe),
+    net: round2(accounts + locked + invest + lent - owe),
+  };
 }
 
 /** Снимок капитала на сегодня (для графика истории). */
@@ -770,4 +786,17 @@ export function removeInvestment(inv) {
   const v = findItem('invest', inv.id);
   if (v && !v.closed && v.fromAccountId) shiftBalance(v.fromAccountId, v.amount, v.currency, `отмена вложения: ${v.name}`);
   return removeItem('invest', inv.id);
+}
+
+/** Деньги на заблокированном счёте стали доступны. */
+export function unlockAccount(acc) {
+  const a = account(acc.id);
+  if (!a) return Promise.resolve();
+  a.locked = false;
+  if (LOCKED_KINDS.has(a.kind)) a.kind = 'other';
+  a.icon = ACCOUNT_KINDS[a.kind].icon;
+  a.history = [...(a.history || []), { date: dayKey(), balance: a.balance, note: 'стало доступно' }].slice(-60);
+  a.updatedAt = Date.now();
+  snapshotCapital();
+  return changed();
 }

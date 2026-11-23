@@ -125,6 +125,7 @@ export function plannedEvents(state, from, to, today = dayKey()) {
     }
   }
   out.push(...investEvents(state, from, to, today));
+  out.push(...unlockEvents(state, from, to, today));
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.title.localeCompare(b.title)));
 }
 
@@ -245,4 +246,15 @@ export function investEvents(state, from, to, today = dayKey()) {
         currency: v.currency, icon: INVEST_KINDS[v.kind]?.icon || '📈', paid: false, overdue: v.end < today,
       };
     });
+}
+
+// ---------- недоступные деньги (залоги, блокировки) ----------
+/** Даты, когда деньги на заблокированных счетах должны стать доступны. */
+export function unlockEvents(state, from, to, today = dayKey()) {
+  return (state.accounts || [])
+    .filter((a) => a.locked && !a.archived && a.unlockDate && a.unlockDate >= from && a.unlockDate < to)
+    .map((a) => ({
+      date: a.unlockDate, kind: 'unlock', type: 'income', ref: a, title: a.name, amount: a.balance || 0,
+      currency: a.currency, icon: '🔓', paid: false, overdue: a.unlockDate < today,
+    }));
 }

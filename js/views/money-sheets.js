@@ -8,16 +8,44 @@ import { parseQuick, guessCategory } from '../nlp.js';
 const label = (t) => h('div', { class: 'section-label micro' }, t);
 
 // ---------- счёт (капитал) ----------
-export function openAccountEditor({ item = null } = {}) {
+export function openAccountEditor({ item = null, preset = '' } = {}) {
   const d = {
-    name: item?.name || '', kind: item?.kind || 'card', currency: item?.currency || store.base(),
+    name: item?.name || '', kind: item?.kind || preset || 'card', currency: item?.currency || store.base(),
     balanceStr: item ? String(item.balance || 0).replace('.', ',') : '', archived: !!item?.archived,
+    locked: item ? !!item.locked : store.LOCKED_KINDS.has(preset), lockReason: item?.lockReason || '', unlockDate: item?.unlockDate || '', countInCapital: item?.countInCapital !== false,
   };
   const kinds = h('div', { class: 'kind-row' });
   const renderKinds = () => {
     clear(kinds);
-    Object.entries(store.ACCOUNT_KINDS).forEach(([k, v]) => kinds.append(h('button', { type: 'button', class: ['chip', k === d.kind && 'active'], onclick: () => { d.kind = k; renderKinds(); } }, `${v.icon} ${v.label}`)));
+    Object.entries(store.ACCOUNT_KINDS).forEach(([k, v]) => kinds.append(h('button', { type: 'button', class: ['chip', k === d.kind && 'active'], onclick: () => {
+      d.kind = k;
+      if (store.LOCKED_KINDS.has(k)) d.locked = true;
+      renderKinds(); renderLock();
+    } }, `${v.icon} ${v.label}`)));
   };
+  // --- недоступные деньги ---
+  const lockBox = h('div', { class: 'editor' });
+  const plusMonths = (n) => { const x = new Date(); x.setMonth(x.getMonth() + n); return x.toISOString().slice(0, 10); };
+  function renderLock() {
+    clear(lockBox);
+    lockBox.append(h('label', { class: 'row set-row card' },
+      h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, '🔒 Недоступно сейчас'), h('span', { class: 'row-sub wrap' }, 'Залог, заблокированный аккаунт, деньги в споре — ваши, но не на руках')),
+      h('input', { type: 'checkbox', class: 'switch', checked: d.locked, onchange: (e) => { d.locked = e.target.checked; renderLock(); } })));
+    if (!d.locked) return;
+    const dateInput = h('input', { type: 'date', class: 'date-input', value: d.unlockDate, onchange: (e) => { d.unlockDate = e.target.value; renderLock(); } });
+    lockBox.append(
+      label('Причина'),
+      h('input', { class: 'field', placeholder: d.kind === 'pledge' ? 'Например, «залог за квартиру на Сумской»' : 'Например, «аккаунт на проверке KYC»', maxlength: '80', value: d.lockReason, oninput: (e) => { d.lockReason = e.target.value; } }),
+      label('Когда станет доступно'),
+      h('div', { class: 'date-row' },
+        ...[[1, '1 мес'], [3, '3 мес'], [6, '6 мес'], [12, 'год']].map(([n, l]) => h('button', { type: 'button', class: 'chip', onclick: () => { d.unlockDate = plusMonths(n); renderLock(); } }, l)),
+        h('button', { type: 'button', class: ['chip', !d.unlockDate && 'active'], onclick: () => { d.unlockDate = ''; renderLock(); } }, 'Не известно'),
+        h('label', { class: ['chip', 'date-chip', d.unlockDate && 'active'] }, dateInput)),
+      d.unlockDate ? h('p', { class: 'muted small' }, `Дата появится в календаре и в напоминаниях: ${shortDate(d.unlockDate)}.`) : null,
+      h('label', { class: 'row set-row card' },
+        h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Учитывать в капитале'), h('span', { class: 'row-sub wrap' }, 'Выключите, если вернуть деньги не гарантировано')),
+        h('input', { type: 'checkbox', class: 'switch', checked: d.countInCapital, onchange: (e) => { d.countInCapital = e.target.checked; } })));
+  }
   const curBtn = h('button', { type: 'button', class: 'cur-btn' });
   const syncCur = () => { curBtn.textContent = d.currency; };
   curBtn.addEventListener('click', () => pickCurrency({ current: d.currency, onPick: (c) => { d.currency = c; syncCur(); } }));
@@ -27,7 +55,8 @@ export function openAccountEditor({ item = null } = {}) {
     const balance = parseAmount(d.balanceStr) || 0;
     const changedBal = !item || balance !== (item.balance || 0) || d.currency !== item.currency;
     const acc = store.upsert('accounts', {
-      ...(item || {}), name: d.name.trim(), kind: d.kind, icon: store.ACCOUNT_KINDS[d.kind].icon, currency: d.currency, balance, archived: d.archived,
+      ...(item || {}), name: d.name.trim(), kind: d.kind, icon: d.locked && !store.LOCKED_KINDS.has(d.kind) ? '🔒' : store.ACCOUNT_KINDS[d.kind].icon, currency: d.currency, balance, archived: d.archived,
+      locked: d.locked, lockReason: d.locked ? d.lockReason.trim() : '', unlockDate: d.locked ? d.unlockDate : '', countInCapital: d.locked ? d.countInCapital : true,
       history: changedBal ? [...(item?.history || []), { date: dayKey(), balance, note: item ? 'изменено' : 'открыт' }].slice(-60) : item.history,
       checkedAt: changedBal ? Date.now() : item?.checkedAt,
     });
@@ -45,6 +74,7 @@ export function openAccountEditor({ item = null } = {}) {
       label('Сколько на счету сейчас'),
       h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.balanceStr, oninput: (e) => { d.balanceStr = e.target.value; } }), curBtn),
       h('p', { class: 'muted small' }, 'Это часть капитала. Ежедневные траты и доходы его не меняют — остаток вы сверяете сами, когда подводите баланс.'),
+      lockBox,
       item && h('label', { class: 'row set-row card' }, h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'В архиве'), h('span', { class: 'row-sub' }, 'Не учитывать в капитале, но сохранить историю')),
         h('input', { type: 'checkbox', class: 'switch', checked: d.archived, onchange: (e) => { d.archived = e.target.checked; } })),
       h('button', { class: 'btn btn-primary save-btn', onclick: save }, item ? 'Сохранить' : 'Добавить счёт'),
@@ -57,6 +87,7 @@ export function openAccountEditor({ item = null } = {}) {
       } }, 'Удалить счёт')),
   });
   renderKinds();
+  renderLock();
 }
 
 export function accountSheet(acc) {
@@ -73,6 +104,14 @@ export function accountSheet(acc) {
         h('div', { class: 'micro' }, `${store.ACCOUNT_KINDS[a.kind]?.label || 'Счёт'}${a.checkedAt ? ` · сверено ${ago(a.checkedAt)}` : ''}`),
         h('div', { class: ['debt-rem', 'mono', bal.balance < 0 && 'neg'] }, money(bal.balance, a.currency)),
         a.currency !== store.base() ? h('div', { class: 'muted small mono' }, `≈ ${money(bal.inBase, store.base())}`) : null),
+      a.locked && h('div', { class: 'lock-banner' },
+        h('span', { class: 'lock-ico' }, '🔒'),
+        h('div', { class: 'row-main' },
+          h('span', { class: 'row-title' }, a.lockReason || 'Недоступно сейчас'),
+          h('span', { class: 'row-sub' }, [a.unlockDate ? `станет доступно ${shortDate(a.unlockDate)}` : 'срок не известен', a.countInCapital === false ? 'не входит в капитал' : 'входит в капитал'].join(' · ')))),
+      a.locked && h('button', { class: 'btn btn-primary', onclick: async () => {
+        if (await confirmSheet('Деньги стали доступны?', { ok: 'Да, доступны', danger: false, detail: 'Счёт станет обычным и войдёт в доступные деньги.' })) { await store.unlockAccount(a); toast('Готово — деньги доступны'); }
+      } }, '🔓 Деньги стали доступны'),
       h('div', { class: 'card pad editor' },
         h('div', { class: 'micro' }, 'Сверить: сколько сейчас на самом деле'),
         h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: String(bal.balance).replace('.', ','), oninput: (e) => { actual = e.target.value; } }), h('span', { class: 'cur-btn' }, a.currency)),

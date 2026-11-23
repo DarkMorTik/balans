@@ -76,3 +76,16 @@ test('investments: stats and maturity events', () => {
   // доход от вложения не считается «зарплатой» в прогнозе
   assert.equal(P.paydayForecast({ recurring: [], debts: [], invest: [v] }, 500, () => 1, '2026-11-21'), null);
 });
+
+test('locked funds: unlock events', () => {
+  const st = { recurring: [], debts: [], invest: [], accounts: [
+    { id: 'a', name: 'Залог за квартиру', locked: true, unlockDate: '2027-02-01', balance: 800, currency: 'USD' },
+    { id: 'b', name: 'Блок KYC', locked: true, unlockDate: '', balance: 300, currency: 'USDT' },
+    { id: 'c', name: 'Карта', locked: false, balance: 100, currency: 'USD' },
+  ] };
+  const ev = P.plannedEvents(st, '2027-01-01', '2027-03-01', '2026-11-23');
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].kind, 'unlock');
+  assert.equal(ev[0].amount, 800);
+  assert.equal(P.unlockEvents(st, '2026-01-01', '2028-01-01', '2027-03-01')[0].overdue, true);
+});

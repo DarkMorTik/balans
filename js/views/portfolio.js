@@ -84,6 +84,8 @@ export function renderPortfolio(root) {
     h('div', { class: 'note-top' }, h('span', { class: 'micro' }, 'Чистый капитал'),
       h('button', { class: 'micro link-micro', onclick: openReconcileSheet }, 'Подвести баланс ›')),
     h('div', { class: 'note-sum' }, money(cap.net, b)),
+    cap.locked > 0 || cap.lockedExcluded > 0 ? h('div', { class: 'note-locked mono' },
+      `доступно ${money(cap.accounts, b)} · 🔒 ${money(cap.locked + cap.lockedExcluded, b)}${cap.lockedExcluded > 0 ? ` (${money(cap.lockedExcluded, b)} вне капитала)` : ''}`) : null,
     h('div', { class: 'note-foot' },
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'счета'), h('span', { class: 'mono' }, money(cap.accounts, b))),
       h('span', { class: 'note-kv' }, h('span', { class: 'micro' }, 'вложения'), h('span', { class: 'mono' }, money(cap.invest, b))),
@@ -92,7 +94,9 @@ export function renderPortfolio(root) {
   root.append(capitalChart(st.capitalHistory || [], b));
 
   // --- счета ---
-  const accs = store.activeAccounts();
+  const allAccs = store.activeAccounts();
+  const accs = allAccs.filter((a) => !a.locked);
+  const lockedAccs = allAccs.filter((a) => a.locked);
   const bals = store.accountBalances();
   root.append(h('div', { class: 'set-title micro section-head' }, h('span', {}, 'Счета и кошельки'), accs.length ? h('span', { class: 'mono' }, money(cap.accounts, b)) : null));
   const accList = h('div', { class: 'acc-grid' });
@@ -106,7 +110,30 @@ export function renderPortfolio(root) {
   });
   accList.append(h('button', { class: 'acc-card add', onclick: () => openAccountEditor({}) }, h('span', { class: 'acc-plus' }, '+'), h('span', { class: 'acc-name' }, accs.length ? 'Счёт' : 'Добавить счёт'), h('span', { class: 'acc-sub' }, 'карта, наличные, биржа, кошелёк')));
   root.append(accList);
-  if (accs.length >= 2) root.append(h('button', { class: 'btn btn-plain transfer-btn', onclick: () => openTransferSheet({}) }, '⇄ Перевод между счетами'));
+  if (allAccs.length >= 2) root.append(h('button', { class: 'btn btn-plain transfer-btn', onclick: () => openTransferSheet({}) }, '⇄ Перевод между счетами'));
+
+  // --- недоступно сейчас ---
+  const lockedTotal = cap.locked + cap.lockedExcluded;
+  root.append(h('div', { class: 'set-title micro section-head' }, h('span', {}, 'Недоступно сейчас'), lockedAccs.length ? h('span', { class: 'mono' }, `🔒 ${money(lockedTotal, b)}`) : null));
+  const lk = h('div', { class: 'card list' });
+  const today = new Date().toISOString().slice(0, 10);
+  [...lockedAccs].sort((x, y) => (x.unlockDate || '9') < (y.unlockDate || '9') ? -1 : 1).forEach((a) => {
+    const e = bals[a.id] || { balance: 0, inBase: 0 };
+    const days = a.unlockDate ? Math.ceil((new Date(a.unlockDate) - new Date(today)) / 864e5) : null;
+    lk.append(h('button', { class: ['row', 'locked-row', a.countInCapital === false && 'excluded'], onclick: () => accountSheet(a) },
+      h('span', { class: 'cat-ico swap' }, a.icon || '🔒'),
+      h('span', { class: 'row-main' },
+        h('span', { class: 'row-title' }, a.name),
+        h('span', { class: ['row-sub', days != null && days <= 0 && 'inc'] }, [
+          a.lockReason || store.ACCOUNT_KINDS[a.kind]?.label,
+          days == null ? 'срок не известен' : days <= 0 ? 'срок наступил' : `через ${days} дн. · ${shortDate(a.unlockDate)}`,
+          a.countInCapital === false ? 'вне капитала' : null,
+        ].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-end' }, h('span', { class: 'amount' }, money(e.balance, a.currency)), a.currency !== b ? h('span', { class: 'row-sub mono' }, `≈ ${money(e.inBase, b)}`) : null)));
+  });
+  lk.append(h('button', { class: 'row', onclick: () => openAccountEditor({ preset: 'pledge' }) },
+    h('span', { class: 'cat-ico add-ico' }, '+'), h('span', { class: 'row-main' }, h('span', { class: 'row-title' }, 'Добавить недоступные деньги'), h('span', { class: 'row-sub' }, 'Залог, заблокированный аккаунт, спор, удержание'))));
+  root.append(lk);
 
   // --- вложения ---
   investSection(root, b);
