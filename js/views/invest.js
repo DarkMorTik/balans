@@ -49,7 +49,7 @@ export function openInvestEditor({ item = null } = {}) {
 
   async function save() {
     const amount = parseAmount(d.amountStr);
-    if (!d.name.trim()) return toast('Введите название, например «WhiteBit USDT 60 дней»');
+    if (!d.name.trim()) return toast('Введите название, например «Биржа · USDT пул 60 дней»');
     if (!(amount > 0)) return toast('Введите сумму');
     if (d.end <= d.start) return toast('Дата окончания должна быть позже начала');
     const data = { ...(item || {}), kind: d.kind, name: d.name.trim(), amount, currency: d.currency, apr: parseAmount(d.aprStr) || 0, start: d.start, end: d.end, compound: d.compound, note: d.note.trim() };
@@ -65,7 +65,7 @@ export function openInvestEditor({ item = null } = {}) {
     content: h('div', { class: 'editor' },
       kinds,
       label('Название и площадка'),
-      h('input', { class: 'field', placeholder: 'Например, «WhiteBit USDT пул 60 дней»', maxlength: '60', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
+      h('input', { class: 'field', placeholder: 'Например, «Биржа · USDT пул 60 дней»', maxlength: '60', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
       label('Сумма'),
       h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.amountStr, oninput: (e) => { d.amountStr = e.target.value; renderPreview(); } }), curBtn),
       label('Ставка, % годовых (APR)'),

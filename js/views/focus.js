@@ -7,11 +7,20 @@ import { toast } from '../sheet.js';
 const KEY = 'balans-focus';
 const PRESETS = [[25, 5], [50, 10], [15, 3]];
 
+// В localStorage (без шифрования) хранится только время таймера.
+// Название задачи — личные данные, поэтому оно живёт только в памяти.
 function load() {
-  try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; }
+  try {
+    const t = JSON.parse(localStorage.getItem(KEY));
+    return t ? { ...t, label: '' } : null;
+  } catch { return null; }
 }
 function persist(t) {
-  try { if (t) localStorage.setItem(KEY, JSON.stringify(t)); else localStorage.removeItem(KEY); } catch { /* нет доступа */ }
+  try {
+    if (!t) { localStorage.removeItem(KEY); return; }
+    const { label, ...safe } = t;
+    localStorage.setItem(KEY, JSON.stringify(safe));
+  } catch { /* нет доступа */ }
 }
 
 // состояние: { mode: 'focus'|'break', minutes, breakMin, endAt|null, left (сек, на паузе), label }

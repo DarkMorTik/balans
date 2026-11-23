@@ -70,7 +70,7 @@ export function openAccountEditor({ item = null, preset = '' } = {}) {
     content: h('div', { class: 'editor' },
       kinds,
       label('Название'),
-      h('input', { class: 'field', placeholder: 'Например, «Карта Monobank», «Ledger», «WhiteBit»', maxlength: '40', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
+      h('input', { class: 'field', placeholder: 'Например, «Основная карта», «Наличные», «Биржа»', maxlength: '40', value: d.name, oninput: (e) => { d.name = e.target.value; } }),
       label('Сколько на счету сейчас'),
       h('div', { class: 'amount-wrap' }, h('input', { class: 'amount-input mono small-amount', inputmode: 'decimal', placeholder: '0', value: d.balanceStr, oninput: (e) => { d.balanceStr = e.target.value; } }), curBtn),
       h('p', { class: 'muted small' }, 'Это часть капитала. Ежедневные траты и доходы его не меняют — остаток вы сверяете сами, когда подводите баланс.'),
